@@ -1,0 +1,33 @@
+# FastAPI
+fastapi
+uvicorn[standard]
+
+# Validation & Configuration
+pydantic
+pydantic-settings
+python-dotenv
+email-validator
+python-multipart
+
+# Database (PostgreSQL)
+sqlalchemy
+psycopg[binary]
+alembic
+
+# Authentication & Security
+PyJWT
+pwdlib[argon2]
+cryptography
+
+# HTTP Client
+httpx
+
+# Testing
+pytest
+pytest-asyncio
+
+# Code Quality
+ruff
+
+# Supabase
+supabase
