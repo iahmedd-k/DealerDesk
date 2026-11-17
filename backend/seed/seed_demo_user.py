@@ -1,12 +1,9 @@
 """Create or refresh the shared customer and dealership demo accounts."""
 
-from sqlalchemy import select
-
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
-from app.models import Dealership, TestDriveSettings, User
-from app.repositories.user_repository import create, get_by_email
-from app.services.auth_service import hash_password
+from app.models import User
+from app.services.seed_service import seed_demo_users as create_demo_users
 from seed.demo_credentials import (
     CUSTOMER_DEMO_EMAIL,
     CUSTOMER_DEMO_NAME,
@@ -18,75 +15,20 @@ from seed.demo_credentials import (
 )
 
 
-def _get_or_create_dealership(db) -> Dealership:
-    dealership = db.scalar(
-        select(Dealership).where(Dealership.name == DEALERSHIP_DEMO_NAME)
-    )
-    if dealership is None:
-        dealership = Dealership(
-            name=DEALERSHIP_DEMO_NAME,
-            email=DEALERSHIP_DEMO_BUSINESS_EMAIL,
-            timezone="UTC",
-        )
-        db.add(dealership)
-        db.flush()
-        db.add(TestDriveSettings(dealership_id=dealership.id))
-    return dealership
-
-
-def _refresh_user(
-    db,
-    *,
-    name: str,
-    email: str,
-    password: str,
-    role: str,
-    dealership_id: int | None = None,
-) -> User:
-    user = get_by_email(db, email)
-    if user is None:
-        return create(
-            db,
-            name=name,
-            email=email,
-            password=hash_password(password),
-            role=role,
-            dealership_id=dealership_id,
-            commit=False,
-        )
-    user.name = name
-    user.password = hash_password(password)
-    user.role = role
-    user.dealership_id = dealership_id
-    user.is_active = True
-    user.must_change_password = False
-    return user
-
-
 def seed_demo_users() -> tuple[User, User]:
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
-        dealership = _get_or_create_dealership(db)
-        customer = _refresh_user(
+        return create_demo_users(
             db,
-            name=CUSTOMER_DEMO_NAME,
-            email=CUSTOMER_DEMO_EMAIL,
-            password=CUSTOMER_DEMO_PASSWORD,
-            role="customer",
+            customer_name=CUSTOMER_DEMO_NAME,
+            customer_email=CUSTOMER_DEMO_EMAIL,
+            customer_password=CUSTOMER_DEMO_PASSWORD,
+            dealership_name=DEALERSHIP_DEMO_NAME,
+            dealership_business_email=DEALERSHIP_DEMO_BUSINESS_EMAIL,
+            dealership_admin_email=DEALERSHIP_DEMO_EMAIL,
+            dealership_admin_password=DEALERSHIP_DEMO_PASSWORD,
         )
-        dealership_admin = _refresh_user(
-            db,
-            name=DEALERSHIP_DEMO_NAME,
-            email=DEALERSHIP_DEMO_EMAIL,
-            password=DEALERSHIP_DEMO_PASSWORD,
-            role="dealership_admin",
-            dealership_id=dealership.id,
-        )
-        db.commit()
-        db.refresh(customer)
-        db.refresh(dealership_admin)
-        return customer, dealership_admin
     finally:
         db.close()
 

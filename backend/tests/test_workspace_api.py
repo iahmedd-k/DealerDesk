@@ -15,7 +15,7 @@ def test_customer_cannot_create_dealership_vehicle(client, seeded_users) -> None
         f"/api/v1/dealerships/{dealership_id}/vehicles",
         headers={"Authorization": f"Bearer {customer_login.json()['access_token']}"},
         json={
-            "make": "Demo",
+            "brand_id": 1,
             "model": "Vehicle",
             "model_year": 2026,
             "price": 10000,
@@ -34,12 +34,18 @@ def test_dealership_admin_can_manage_vehicle_and_settings(client, seeded_users) 
     token = login.json()["access_token"]
     dealership_id = seeded_users[1].dealership_id
     headers = {"Authorization": f"Bearer {token}"}
+    brands = client.get(
+        f"/api/v1/dealerships/{dealership_id}/brands",
+        headers=headers,
+    )
+    assert brands.status_code == 200
+    brand_id = brands.json()[0]["id"]
 
     vehicle = client.post(
         f"/api/v1/dealerships/{dealership_id}/vehicles",
         headers=headers,
         json={
-            "make": "Demo",
+            "brand_id": brand_id,
             "model": "Vehicle",
             "model_year": 2026,
             "price": 10000,

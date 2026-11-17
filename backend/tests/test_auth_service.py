@@ -16,20 +16,25 @@ def test_password_hash_round_trip() -> None:
 
 
 def test_access_token_contains_user_and_expiry() -> None:
-    token = auth_service.create_access_token(42)
+    token = auth_service.create_access_token(42, token_version=3)
 
-    payload = jwt.decode(token, "test-only-jwt-secret-that-is-at-least-32-bytes", algorithms=["HS256"])
+    payload = jwt.decode(
+        token, "test-only-jwt-secret-that-is-at-least-32-bytes", algorithms=["HS256"]
+    )
     assert payload["sub"] == "42"
-    assert datetime.now(timezone.utc) < datetime.fromtimestamp(payload["exp"], timezone.utc) <= (
-        datetime.now(timezone.utc) + timedelta(minutes=30)
+    assert payload["ver"] == 3
+    assert auth_service.get_access_token_identity(token) == (42, 3)
+    assert (
+        datetime.now(timezone.utc)
+        < datetime.fromtimestamp(payload["exp"], timezone.utc)
+        <= (datetime.now(timezone.utc) + timedelta(minutes=30))
     )
 
 
-def test_revoked_token_is_rejected() -> None:
-    token = "token-to-revoke"
-    auth_service.revoke_token(token)
-
-    assert auth_service.is_token_revoked(token)
+def test_token_hash_is_stable_and_one_way() -> None:
+    token = "access-token-value"
+    assert auth_service.hash_token(token) == auth_service.hash_token(token)
+    assert auth_service.hash_token(token) != token
 
 
 def test_missing_jwt_secret_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -39,5 +44,7 @@ def test_missing_jwt_secret_is_reported(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("JWT_SECRET_KEY", "")
     with pytest.raises(RuntimeError, match="JWT_SECRET_KEY must be configured"):
         auth_service.create_access_token(1)
-    monkeypatch.setenv("JWT_SECRET_KEY", "test-only-jwt-secret-that-is-at-least-32-bytes")
+    monkeypatch.setenv(
+        "JWT_SECRET_KEY", "test-only-jwt-secret-that-is-at-least-32-bytes"
+    )
     get_settings.cache_clear()

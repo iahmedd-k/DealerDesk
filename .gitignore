@@ -17,8 +17,6 @@ env/
 
 # Local databases and runtime data
 *.db
-*.sqlite
-*.sqlite3
 
 # JavaScript/TypeScript
 node_modules/
