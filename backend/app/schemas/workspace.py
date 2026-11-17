@@ -7,6 +7,12 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 STAFF_ROLES = {"dealership_admin", "manager", "sales_rep"}
 
 
+class CustomerSignUpRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+
+
 class DealershipRegistrationRequest(BaseModel):
     dealership_name: str = Field(min_length=1, max_length=150)
     dealership_email: EmailStr
@@ -149,7 +155,7 @@ class DealershipUpdateRequest(BaseModel):
 
     @field_validator("timezone")
     @classmethod
-    def validate_timezone(cls, value: str | None) -> str | None:
+    def validate_update_timezone(cls, value: str | None) -> str | None:
         if value is not None:
             try:
                 ZoneInfo(value)

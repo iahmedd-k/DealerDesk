@@ -4,11 +4,11 @@ from collections.abc import AsyncIterator
 from fastapi import FastAPI
 
 from app.api.v1.router import router as api_router
+from app.core.errors import ApplicationError, application_error_handler
 from app.db.base import Base
 from app.db.migrations import ensure_vehicle_brand_associations
 from app.db.session import engine
 from app.models import TestDriveBooking
-from app.core.errors import ApplicationError, application_error_handler
 
 
 @asynccontextmanager
