@@ -4,16 +4,28 @@ from collections.abc import AsyncIterator
 from fastapi import FastAPI
 
 from app.api.v1.router import router as api_router
+from app.core.errors import ApplicationError, application_error_handler
 from app.db.base import Base
+from app.db.migrations import ensure_vehicle_brand_associations
 from app.db.session import engine
-import app.models  # noqa: F401
+from app.models import TestDriveBooking
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     Base.metadata.create_all(bind=engine)
+    ensure_vehicle_brand_associations(engine)
+    active_booking_index = next(
+        index
+        for index in TestDriveBooking.__table__.indexes
+        if index.name == "uq_test_drive_booking_active_customer"
+    )
+    active_booking_index.create(bind=engine, checkfirst=True)
     print("Server is running", flush=True)
-    yield
+    try:
+        yield
+    finally:
+        engine.dispose()
 
 
 app = FastAPI(
@@ -43,6 +55,7 @@ app = FastAPI(
     },
 )
 
+app.add_exception_handler(ApplicationError, application_error_handler)
 app.include_router(api_router)
 
 

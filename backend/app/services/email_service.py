@@ -13,7 +13,10 @@ def send_staff_invitation(
     activation_token: str,
 ) -> str:
     settings = get_settings()
-    if settings.resend_api_key is None:
+    if (
+        settings.resend_api_key is None
+        or not settings.resend_api_key.get_secret_value()
+    ):
         return "email_provider_pending"
 
     payload = {
@@ -25,6 +28,44 @@ def send_staff_invitation(
             f"Temporary password: {temporary_password}\n"
             f"Activation token: {activation_token}\n\n"
             "Sign in and change this temporary password immediately."
+        ),
+    }
+    if settings.resend_reply_to:
+        payload["reply_to"] = [settings.resend_reply_to]
+    request = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {settings.resend_api_key.get_secret_value()}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            if response.status not in {200, 201}:
+                return "email_delivery_failed"
+    except (OSError, urllib.error.HTTPError):
+        return "email_delivery_failed"
+    return "email_sent"
+
+
+def send_password_reset(*, recipient: str, reset_token: str) -> str:
+    settings = get_settings()
+    if (
+        settings.resend_api_key is None
+        or not settings.resend_api_key.get_secret_value()
+    ):
+        return "email_provider_pending"
+
+    payload = {
+        "from": settings.resend_from_email,
+        "to": [recipient],
+        "subject": "Reset your DealerDesk password",
+        "text": (
+            "A password reset was requested for your DealerDesk account.\n\n"
+            f"Reset token: {reset_token}\n"
+            "This token expires in one hour."
         ),
     }
     if settings.resend_reply_to:

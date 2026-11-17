@@ -35,4 +35,20 @@ class LoginRequest(BaseModel):
 
 class TokenResponse(BaseModel):
     access_token: str = Field(description="JWT access token.")
-    token_type: str = Field(default="bearer", description="Token authentication scheme.")
+    token_type: str = Field(
+        default="bearer", description="Token authentication scheme."
+    )
+    refresh_token: str = Field(description="Single-use refresh token.")
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str = Field(min_length=32, max_length=128)
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str = Field(min_length=32, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)

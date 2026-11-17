@@ -1,6 +1,16 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -29,18 +39,51 @@ class StaffInvitation(Base):
     role: Mapped[str] = mapped_column(String(32))
     activation_token: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class Brand(Base):
+    __tablename__ = "brands"
+    __table_args__ = (
+        Index(
+            "uq_brand_dealership_name_active",
+            "dealership_id",
+            text("lower(name)"),
+            unique=True,
+            postgresql_where=text("is_deleted = false"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    dealership_id: Mapped[int] = mapped_column(ForeignKey("dealerships.id"), index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    logo_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    logo_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class Vehicle(Base):
     __tablename__ = "vehicles"
     __table_args__ = (
-        UniqueConstraint("dealership_id", "stock_number", name="uq_vehicle_dealership_stock"),
+        UniqueConstraint(
+            "dealership_id", "stock_number", name="uq_vehicle_dealership_stock"
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     dealership_id: Mapped[int] = mapped_column(ForeignKey("dealerships.id"), index=True)
+    brand_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "brands.id", name="fk_vehicles_brand_id_brands", ondelete="RESTRICT"
+        ),
+        index=True,
+    )
     make: Mapped[str] = mapped_column(String(80))
     model: Mapped[str] = mapped_column(String(80))
     model_year: Mapped[int] = mapped_column(Integer)
@@ -85,3 +128,27 @@ class TestDriveSlot(Base):
     capacity: Mapped[int] = mapped_column(Integer)
     booked_count: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class TestDriveBooking(Base):
+    __tablename__ = "test_drive_bookings"
+    __table_args__ = (
+        Index(
+            "uq_test_drive_booking_active_customer",
+            "slot_id",
+            "customer_id",
+            unique=True,
+            postgresql_where=text("status = 'booked'"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    slot_id: Mapped[int] = mapped_column(ForeignKey("test_drive_slots.id"), index=True)
+    dealership_id: Mapped[int] = mapped_column(ForeignKey("dealerships.id"), index=True)
+    vehicle_id: Mapped[int] = mapped_column(ForeignKey("vehicles.id"), index=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="booked")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

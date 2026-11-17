@@ -1,15 +1,23 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
+from app.core.roles import DEALERSHIP_ADMIN_ROLE
 from app.db.session import get_db
 from app.dependencies.auth import bearer_scheme, get_current_user
+from app.dependencies.workspace import require_roles
 from app.models.user import User
-from app.repositories import user_repository
-from app.schemas.auth import LoginRequest, SignUpRequest, TokenResponse
-from app.schemas.user import UserResponse
-from app.schemas.workspace import ChangePasswordRequest
-from app.services import auth_service
+from app.schemas.auth import (
+    LoginRequest,
+    PasswordResetConfirm,
+    PasswordResetRequest,
+    RefreshTokenRequest,
+    SignUpRequest,
+    TokenResponse,
+)
+from app.schemas.user import UserResponse, UserUpdateRequest
+from app.schemas.workspace import ActivationRequest, ChangePasswordRequest
+from app.services import account_service
 
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -27,17 +35,11 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
         422: {"description": "The request data failed validation."},
     },
 )
-def signup(payload: SignUpRequest, db: Session = Depends(get_db)) -> User:
-    email = str(payload.email).lower()
-    if user_repository.get_by_email(db, email):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
-    return user_repository.create(
-        db,
-        name=payload.name,
-        email=email,
-        password=auth_service.hash_password(payload.password),
-        role="customer",
-    )
+def signup(
+    payload: SignUpRequest,
+    db: Session = Depends(get_db),
+) -> User:
+    return account_service.signup(db, payload)
 
 
 @router.post(
@@ -46,7 +48,7 @@ def signup(payload: SignUpRequest, db: Session = Depends(get_db)) -> User:
     summary="Log in",
     description=(
         "Authenticates a user with email and password. "
-        "Use the returned bearer token for protected endpoints."
+        "Use the access token for protected endpoints and rotate the refresh token when it expires."
     ),
     response_description="A bearer access token.",
     responses={
@@ -59,35 +61,25 @@ def login(
     payload: LoginRequest,
     db: Session = Depends(get_db),
 ) -> TokenResponse:
-    user = user_repository.get_by_email(db, str(payload.email).lower())
-    if user is None or not auth_service.verify_password(payload.password, user.password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    try:
-        access_token = auth_service.create_access_token(user.id)
-    except RuntimeError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
-    return TokenResponse(access_token=access_token)
+    return account_service.login(db, payload)
 
 
 @router.post(
     "/logout",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Log out",
-    description="Revokes the current bearer token.",
+    description="Revokes the current access token and all refresh tokens for the account.",
     response_description="The token was revoked successfully.",
     responses={
         401: {"description": "A valid bearer token was not provided."},
     },
 )
-def logout(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)) -> None:
-    auth_service.revoke_token(credentials.credentials)
+def logout(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    account_service.logout(db, credentials.credentials, current_user)
 
 
 @router.get(
@@ -104,18 +96,72 @@ def me(current_user: User = Depends(get_current_user)) -> User:
     return current_user
 
 
+@router.get("/users", response_model=list[UserResponse])
+def list_users(
+    current_user: User = Depends(require_roles(DEALERSHIP_ADMIN_ROLE)),
+    db: Session = Depends(get_db),
+) -> list[User]:
+    return account_service.list_users(db, current_user)
+
+
+@router.patch("/me", response_model=UserResponse)
+def update_me(
+    payload: UserUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> User:
+    return account_service.update_current_user(db, current_user, payload)
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+def delete_me(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    account_service.delete_current_user(db, current_user)
+
+
+@router.post(
+    "/refresh",
+    response_model=TokenResponse,
+    summary="Rotate refresh token",
+    description="Issues a new access token and refresh token, revoking the refresh token provided.",
+)
+def refresh_access_token(
+    payload: RefreshTokenRequest,
+    db: Session = Depends(get_db),
+) -> TokenResponse:
+    return account_service.refresh_access_token(db, payload)
+
+
+@router.post("/request-password-reset")
+def request_password_reset(
+    payload: PasswordResetRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    return account_service.request_password_reset(db, payload)
+
+
+@router.post("/reset-password")
+def reset_password(
+    payload: PasswordResetConfirm,
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    return account_service.reset_password(db, payload)
+
+
+@router.post("/activate-invitation", response_model=UserResponse)
+def activate_invitation(
+    payload: ActivationRequest,
+    db: Session = Depends(get_db),
+) -> User:
+    return account_service.activate_invitation(db, payload)
+
+
 @router.post("/change-password", response_model=UserResponse)
 def change_password(
     payload: ChangePasswordRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> User:
-    if not auth_service.verify_password(payload.current_password, current_user.password):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
-    if payload.current_password == payload.new_password:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="New password must be different")
-    current_user.password = auth_service.hash_password(payload.new_password)
-    current_user.must_change_password = False
-    db.commit()
-    db.refresh(current_user)
-    return current_user
+    return account_service.change_password(db, current_user, payload)

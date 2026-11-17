@@ -19,6 +19,37 @@ class Settings(BaseSettings):
     jwt_secret_key: SecretStr | None = None
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
+    database_pool_size: int = Field(
+        default=5,
+        ge=1,
+        validation_alias=AliasChoices("DATABASE_POOL_SIZE", "database_pool_size"),
+    )
+    database_max_overflow: int = Field(
+        default=10,
+        ge=0,
+        validation_alias=AliasChoices("DATABASE_MAX_OVERFLOW", "database_max_overflow"),
+    )
+    database_pool_timeout: int = Field(
+        default=30,
+        ge=1,
+        validation_alias=AliasChoices("DATABASE_POOL_TIMEOUT", "database_pool_timeout"),
+    )
+    database_pool_recycle: int = Field(
+        default=1800,
+        ge=-1,
+        validation_alias=AliasChoices("DATABASE_POOL_RECYCLE", "database_pool_recycle"),
+    )
+    database_pool_pre_ping: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "DATABASE_POOL_PRE_PING",
+            "database_pool_pre_ping",
+        ),
+    )
+    database_schema: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("DATABASE_SCHEMA", "database_schema"),
+    )
     supabase_url: str | None = None
     supabase_key: SecretStr | None = Field(
         default=None,
@@ -27,6 +58,10 @@ class Settings(BaseSettings):
             "SUPABASE_KEY",
             "SUPABASE_PUBLISHABLE_KEY",
         ),
+    )
+    supabase_bucket_id: str = Field(
+        default="brand-logos",
+        validation_alias=AliasChoices("SUPABASE_BUCKET_ID", "supabase_bucket_id"),
     )
     resend_api_key: SecretStr | None = Field(
         default=None,
@@ -52,5 +87,5 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     settings = Settings()
     if not settings.database_url.startswith(("postgresql://", "postgresql+")):
-        raise ValueError("supabase_string must contain a PostgreSQL connection URL")
+        raise ValueError("database_url must contain a PostgreSQL URL")
     return settings
