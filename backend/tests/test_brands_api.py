@@ -2,13 +2,13 @@ from datetime import date, timedelta
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from app.services.brand_service import MAX_LOGO_SIZE
 from app.core.config import get_settings
 from app.db.session import engine
 from app.db.migrations import ensure_vehicle_brand_associations
-from app.models.workspace import Brand, TestDriveBooking, TestDriveSlot, Vehicle
+from app.models.workspace import Brand, Dealership, TestDriveBooking, TestDriveSlot, Vehicle
 from app.schemas.workspace import DealershipRegistrationRequest
 from seed.demo_credentials import (
     CUSTOMER_DEMO_EMAIL,
@@ -261,6 +261,12 @@ def test_brand_limit_counts_inactive_and_deleted_brands_free_capacity(
     ).json()[0]["id"]
     db.add_all(
         Brand(dealership_id=dealership_id, name=f"Brand {index}") for index in range(19)
+    )
+    db.commit()
+    dealership = db.get(Dealership, dealership_id)
+    assert dealership is not None
+    dealership.max_brands = db.scalar(
+        select(func.count(Brand.id)).where(Brand.dealership_id == dealership_id)
     )
     db.commit()
     inactive_brand_id = db.scalar(

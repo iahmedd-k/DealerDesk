@@ -17,6 +17,19 @@ services:
       timeout: 5s
       retries: 5
 
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dealerdesk-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://dealerdesk:dealerdesk_secret@postgres:5432/dealerdesk
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
   backend:
     build:
       context: ./backend
@@ -26,6 +39,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql+psycopg://dealerdesk:dealerdesk_secret@postgres:5432/dealerdesk
       JWT_SECRET_KEY: test-only-jwt-secret-that-is-at-least-32-bytes

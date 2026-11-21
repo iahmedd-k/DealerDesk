@@ -1,8 +1,9 @@
-from datetime import date, datetime, time, timezone
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.user import User
 from app.models.workspace import (
     Brand,
     TestDriveBooking,
@@ -50,8 +51,8 @@ def list_slots(
     dealership_id: int,
     *,
     vehicle_id: int | None = None,
-    start_date: date | None = None,
-    end_date: date | None = None,
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
     available_only: bool = False,
     include_inactive: bool = False,
 ) -> list[TestDriveSlot]:
@@ -62,12 +63,10 @@ def list_slots(
         query = query.where(TestDriveSlot.is_active.is_(True))
     if vehicle_id is not None:
         query = query.where(TestDriveSlot.vehicle_id == vehicle_id)
-    if start_date is not None:
-        start_dt = datetime.combine(start_date, time.min, tzinfo=timezone.utc)
-        query = query.where(TestDriveSlot.starts_at >= start_dt)
-    if end_date is not None:
-        end_dt = datetime.combine(end_date, time.max, tzinfo=timezone.utc)
-        query = query.where(TestDriveSlot.ends_at <= end_dt)
+    if start_at is not None:
+        query = query.where(TestDriveSlot.starts_at >= start_at)
+    if end_at is not None:
+        query = query.where(TestDriveSlot.starts_at < end_at)
     if available_only:
         now = datetime.now(timezone.utc)
         query = query.where(
@@ -208,6 +207,14 @@ def get_vehicle(db: Session, vehicle_id: int) -> Vehicle | None:
 
 def get_brand(db: Session, brand_id: int) -> Brand | None:
     return db.get(Brand, brand_id)
+
+
+def lock_customer(db: Session, customer_id: int) -> None:
+    db.scalar(
+        select(User.id)
+        .where(User.id == customer_id)
+        .with_for_update()
+    )
 
 
 def has_booking(

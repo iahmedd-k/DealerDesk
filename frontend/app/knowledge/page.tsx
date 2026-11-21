@@ -16,81 +16,115 @@ import {
 import Shell from "../components/Shell";
 import { useAuth } from "../providers";
 import { api } from "../api";
-import {
-  MOCK_KNOWLEDGE_DOCUMENTS,
-  MOCK_BRANDS,
-  KnowledgeDocument,
-  Brand,
-} from "../lib/mockData";
+import type { KnowledgeDocument, Brand } from "../lib/types";
 
 export default function KnowledgePage() {
   const { user, activeDealershipId } = useAuth();
-  const [documents, setDocuments] = useState<KnowledgeDocument[]>(MOCK_KNOWLEDGE_DOCUMENTS);
-  const [brands, setBrands] = useState<Brand[]>(MOCK_BRANDS);
+  const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
+  const [brands, setBrands] = useState<Brand[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<Array<{ content: string; source: string; score: number }>>([]);
   const [searching, setSearching] = useState(false);
 
   // Modal
   const [showUploadModal, setShowUploadModal] = useState(false);
-  const [docTitle, setDocTitle] = useState("");
   const [docBrand, setDocBrand] = useState<string>("all");
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
 
   const isStaff = user && user.role !== "customer";
 
   useEffect(() => {
-    api<KnowledgeDocument[]>(`/dealerships/${activeDealershipId}/knowledge/documents`)
-      .then((data) => {
-        if (Array.isArray(data) && data.length) setDocuments(data);
+    if (!activeDealershipId) {
+      setLoading(false);
+      setError("Select a dealership workspace to view knowledge documents.");
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    Promise.all([
+      api<KnowledgeDocument[]>(`/dealerships/${activeDealershipId}/knowledge/documents`),
+      api<Brand[]>(`/dealerships/${activeDealershipId}/brands`),
+    ])
+      .then(([nextDocuments, nextBrands]) => {
+        if (cancelled) return;
+        setDocuments(nextDocuments);
+        setBrands(nextBrands);
       })
-      .catch(() => {});
+      .catch((cause: unknown) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : "Could not load knowledge documents.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [activeDealershipId]);
 
-  function handleUpload(e: React.FormEvent) {
+  async function handleUpload(e: React.FormEvent) {
     e.preventDefault();
-    const brandObj = brands.find((b) => String(b.id) === docBrand);
-    const newDoc: KnowledgeDocument = {
-      id: Math.floor(Math.random() * 9000) + 1000,
-      dealership_id: activeDealershipId,
-      brand_id: docBrand === "all" ? null : Number(docBrand),
-      brand_name: brandObj ? brandObj.name : "All Brands",
-      title: docTitle || "Dealership Manual.pdf",
-      mime_type: "application/pdf",
-      source_file: "uploaded_doc.pdf",
-      chunk_count: Math.floor(Math.random() * 10) + 5,
-      created_at: new Date().toISOString(),
-      status: "ready",
-    };
-
-    setDocuments([newDoc, ...documents]);
-    setShowUploadModal(false);
-    setDocTitle("");
+    if (!activeDealershipId || !uploadFile) return;
+    setError("");
+    const formData = new FormData();
+    formData.append("file", uploadFile);
+    if (docBrand !== "all") formData.append("brand_id", docBrand);
+    try {
+      const created = await api<KnowledgeDocument>(
+        `/dealerships/${activeDealershipId}/knowledge/documents`,
+        { method: "POST", body: formData },
+      );
+      setDocuments((current) => [created, ...current]);
+      setShowUploadModal(false);
+      setUploadFile(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not index this document.");
+    }
   }
 
-  function handleDelete(id: number) {
-    setDocuments(documents.filter((d) => d.id !== id));
+  async function handleDelete(id: number) {
+    if (!activeDealershipId) return;
+    setError("");
+    try {
+      await api<void>(`/dealerships/${activeDealershipId}/knowledge/documents/${id}`, {
+        method: "DELETE",
+      });
+      setDocuments((current) => current.filter((document) => document.id !== id));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not delete this document.");
+    }
   }
 
-  function handleSemanticSearch(e: React.FormEvent) {
+  async function handleSemanticSearch(e: React.FormEvent) {
     e.preventDefault();
-    if (!searchQuery.trim()) return;
+    if (!activeDealershipId || !searchQuery.trim()) return;
     setSearching(true);
-
-    setTimeout(() => {
-      setSearchResults([
-        {
-          source: "Toyota 2024 Camry Specs & Warranty Guide.pdf (Chunk #3)",
-          content: "Warranty terms provide 36-month/36,000-mile comprehensive coverage and 60-month/60,000-mile powertrain coverage. Hybrid-related components are covered for 8 years or 100,000 miles.",
-          score: 0.89,
-        },
-        {
-          source: "Apex Motors Test Drive Customer Agreement & Safety.pdf (Chunk #1)",
-          content: "Customers must hold a valid driver's license and complete identity verification prior to slot commencement. Rescheduling is permissible up to 2 hours before scheduled slot.",
-          score: 0.82,
-        },
-      ]);
+    setError("");
+    try {
+      const results = await api<Array<{
+        content: string;
+        score: number;
+        filename: string;
+        page_number: number | null;
+        chunk_index: number;
+      }>>(`/dealerships/${activeDealershipId}/knowledge/search`, {
+        method: "POST",
+        body: JSON.stringify({ query: searchQuery.trim(), brand_id: docBrand === "all" ? null : Number(docBrand), limit: 5 }),
+      });
+      setSearchResults(results.map((result) => ({
+        content: result.content,
+        score: result.score,
+        source: `${result.filename}${result.page_number ? ` (page ${result.page_number})` : ""}, chunk ${result.chunk_index + 1}`,
+      })));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Knowledge search failed.");
+    } finally {
       setSearching(false);
-    }, 400);
+    }
   }
 
   return (
@@ -111,6 +145,12 @@ export default function KnowledgePage() {
             Ingest PDFs, TXT, and Markdown to semantically ground the Dealership AI Copilot
           </p>
         </div>
+
+        {error && <div role="alert" className="mb-4 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">{error}</div>}
+        {loading && <p className="mb-4 text-xs text-slate-400">Loading knowledge documents...</p>}
+        {!loading && !error && documents.length === 0 && (
+          <p className="mb-4 rounded-lg border border-slate-800 bg-slate-900 p-4 text-sm text-slate-400">No documents have been indexed for this dealership.</p>
+        )}
 
         {isStaff && (
           <button onClick={() => setShowUploadModal(true)} className="btn-primary">
@@ -148,19 +188,17 @@ export default function KnowledgePage() {
                           <FileText className="h-4 w-4" />
                         </div>
                         <div>
-                          <div className="font-bold text-white text-xs">{doc.title}</div>
+                          <div className="font-bold text-white text-xs">{doc.filename ?? doc.title ?? "Untitled document"}</div>
                           <div className="text-[10px] text-slate-500">
                             Indexed {new Date(doc.created_at).toLocaleDateString()}
                           </div>
                         </div>
                       </div>
                     </td>
-                    <td>
-                      <span className="badge badge-neutral">{doc.brand_name || "All Brands"}</span>
-                    </td>
+                    <td><span className="badge badge-neutral">{brands.find((brand) => brand.id === doc.brand_id)?.name ?? "All Brands"}</span></td>
                     <td>
                       <span className="font-mono text-[11px] text-slate-400 uppercase">
-                        {doc.mime_type.split("/")[1] || "PDF"}
+                        {(doc.media_type ?? doc.mime_type ?? "").split("/")[1] || "FILE"}
                       </span>
                     </td>
                     <td>
@@ -229,7 +267,7 @@ export default function KnowledgePage() {
                       </span>
                     </div>
                     <p className="text-slate-300 text-[11px] leading-relaxed italic">
-                      "{r.content}"
+                      &quot;{r.content}&quot;
                     </p>
                   </div>
                 ))}
@@ -255,13 +293,12 @@ export default function KnowledgePage() {
 
             <form onSubmit={handleUpload} className="p-5 space-y-4 text-xs">
               <div>
-                <label className="text-slate-300 font-semibold mb-1 block">Document Title</label>
+                <label className="text-slate-300 font-semibold mb-1 block">Document file</label>
                 <input
-                  type="text"
+                  type="file"
                   required
-                  placeholder="e.g. 2024 Apex Motors Service & Warranty Policy.pdf"
-                  value={docTitle}
-                  onChange={(e) => setDocTitle(e.target.value)}
+                  accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown"
+                  onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
                   className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white"
                 />
               </div>
@@ -282,17 +319,13 @@ export default function KnowledgePage() {
                 </select>
               </div>
 
-              <div className="border-2 border-dashed border-slate-700 rounded-xl p-6 text-center bg-slate-950/50">
-                <Upload className="h-8 w-8 text-slate-500 mx-auto mb-2" />
-                <p className="text-xs text-slate-300 font-semibold">Drop PDF, Markdown, or TXT file here</p>
-                <p className="text-[11px] text-slate-500 mt-1">Supports up to 10MB per document</p>
-              </div>
+              <p className="text-[11px] text-slate-500">PDF, Markdown, and plain-text files up to 10 MB are supported.</p>
 
               <div className="pt-4 border-t border-slate-800 flex justify-end gap-2">
                 <button type="button" onClick={() => setShowUploadModal(false)} className="btn-secondary">
                   Cancel
                 </button>
-                <button type="submit" className="btn-primary">
+                <button type="submit" disabled={!uploadFile} className="btn-primary disabled:opacity-50">
                   Index Document
                 </button>
               </div>

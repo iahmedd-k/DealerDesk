@@ -4,28 +4,21 @@ import { useEffect, useState } from "react";
 import {
   Users,
   UserPlus,
-  Mail,
   Shield,
-  Clock,
   X,
-  Trash2,
   CheckCircle2,
-  AlertCircle,
 } from "lucide-react";
 import Shell from "../components/Shell";
 import { useAuth } from "../providers";
 import { api } from "../api";
-import {
-  MOCK_STAFF,
-  MOCK_INVITATIONS,
-  StaffUser,
-  StaffInvitation,
-} from "../lib/mockData";
+import type { StaffUser, StaffInvitation } from "../lib/types";
 
 export default function StaffPage() {
   const { user, activeDealershipId } = useAuth();
-  const [staff, setStaff] = useState<StaffUser[]>(MOCK_STAFF);
-  const [invitations, setInvitations] = useState<StaffInvitation[]>(MOCK_INVITATIONS);
+  const [staff, setStaff] = useState<StaffUser[]>([]);
+  const [invitations, setInvitations] = useState<StaffInvitation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   // Invite modal
   const [showInviteModal, setShowInviteModal] = useState(false);
@@ -34,47 +27,111 @@ export default function StaffPage() {
   const [inviteRole, setInviteRole] = useState("sales_rep");
   const [notice, setNotice] = useState("");
 
-  const isAdmin = user?.role === "dealership_admin" || user?.role === "dealerdesk_admin";
+  const isAdmin = user?.role === "dealership_admin";
 
   useEffect(() => {
-    api<StaffUser[]>(`/dealerships/${activeDealershipId}/staff`)
-      .then((data) => {
-        if (Array.isArray(data) && data.length) setStaff(data);
-      })
-      .catch(() => {});
+    if (!activeDealershipId) {
+      setLoading(false);
+      setError("Select a dealership workspace to view staff.");
+      return;
+    }
 
-    api<StaffInvitation[]>(`/dealerships/${activeDealershipId}/staff/invitations`)
-      .then((data) => {
-        if (Array.isArray(data) && data.length) setInvitations(data);
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    Promise.all([
+      api<StaffUser[]>(`/dealerships/${activeDealershipId}/staff`),
+      api<StaffInvitation[]>(`/dealerships/${activeDealershipId}/staff/invitations`),
+    ])
+      .then(([nextStaff, nextInvitations]) => {
+        if (cancelled) return;
+        setStaff(nextStaff);
+        setInvitations(nextInvitations);
       })
-      .catch(() => {});
+      .catch((cause: unknown) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : "Could not load staff.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [activeDealershipId]);
 
-  function handleInvite(e: React.FormEvent) {
+  async function handleInvite(e: React.FormEvent) {
     e.preventDefault();
-    const newInv: StaffInvitation = {
-      id: Math.floor(Math.random() * 9000) + 1000,
-      dealership_id: activeDealershipId,
-      name: inviteName,
-      email: inviteEmail,
-      role: inviteRole,
-      expires_at: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString(),
-      delivery_status: "delivered",
-      status: "pending",
-    };
-
-    setInvitations([newInv, ...invitations]);
-    setShowInviteModal(false);
-    setInviteName("");
-    setInviteEmail("");
-    setNotice(`Invitation sent to ${inviteEmail} with 7-day token.`);
-    setTimeout(() => setNotice(""), 5000);
+    if (!activeDealershipId) return;
+    setError("");
+    try {
+      const invitation = await api<StaffInvitation>(
+        `/dealerships/${activeDealershipId}/staff/invite`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            name: inviteName.trim(),
+            email: inviteEmail.trim(),
+            role: inviteRole,
+          }),
+        },
+      );
+      setInvitations((current) => [invitation, ...current]);
+      setShowInviteModal(false);
+      setInviteName("");
+      setInviteEmail("");
+      setNotice(`Invitation ${invitation.delivery_status.replaceAll("_", " ")} for ${invitation.email}.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not send the invitation.");
+    }
   }
 
-  function handleRevoke(invId: number) {
-    setInvitations(invitations.filter((i) => i.id !== invId));
-    setNotice("Staff invitation revoked.");
-    setTimeout(() => setNotice(""), 4000);
+  async function handleRevoke(invitationId: number | null) {
+    if (!activeDealershipId || invitationId === null) return;
+    setError("");
+    try {
+      await api<void>(
+        `/dealerships/${activeDealershipId}/staff/invitations/${invitationId}`,
+        { method: "DELETE" },
+      );
+      setInvitations((current) => current.filter((invitation) => invitation.id !== invitationId));
+      setNotice("Staff invitation revoked.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not revoke the invitation.");
+    }
+  }
+
+  async function updateStaffMember(
+    member: StaffUser,
+    changes: { role?: StaffUser["role"]; is_active?: boolean },
+  ) {
+    if (!activeDealershipId) return;
+    setError("");
+    try {
+      const updated = await api<StaffUser>(
+        `/dealerships/${activeDealershipId}/staff/${member.id}`,
+        { method: "PATCH", body: JSON.stringify(changes) },
+      );
+      setStaff((current) => current.map((item) => item.id === updated.id ? updated : item));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update this staff member.");
+    }
+  }
+
+  async function removeStaffMember(member: StaffUser) {
+    if (!activeDealershipId || !window.confirm(`Deactivate ${member.name}'s account?`)) return;
+    setError("");
+    try {
+      await api<void>(`/dealerships/${activeDealershipId}/staff/${member.id}`, {
+        method: "DELETE",
+      });
+      setStaff((current) => current.map((item) =>
+        item.id === member.id ? { ...item, is_active: false } : item,
+      ));
+      setNotice(`${member.name} has been deactivated.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not deactivate this staff member.");
+    }
   }
 
   return (
@@ -110,6 +167,8 @@ export default function StaffPage() {
           <span>{notice}</span>
         </div>
       )}
+      {error && <div role="alert" className="mb-4 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">{error}</div>}
+      {loading && <p className="mb-4 text-xs text-slate-400">Loading staff...</p>}
 
       {/* Staff Table */}
       <div className="space-y-6">
@@ -123,7 +182,7 @@ export default function StaffPage() {
                   <th>Email Address</th>
                   <th>Assigned Role</th>
                   <th>Status</th>
-                  <th>Last Session</th>
+                  {isAdmin && <th>Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -152,9 +211,49 @@ export default function StaffPage() {
                       </span>
                     </td>
                     <td>
-                      <span className="badge badge-success">Active</span>
+                      <span className={`badge ${s.is_active ? "badge-success" : "badge-neutral"}`}>
+                        {s.is_active ? "Active" : "Inactive"}
+                      </span>
                     </td>
-                    <td className="text-slate-400 text-xs">{s.last_login || "Today"}</td>
+                    {isAdmin && (
+                      <td>
+                        <div className="flex items-center gap-2">
+                          {s.role !== "dealership_admin" && (
+                            <>
+                              <select
+                                aria-label={`Role for ${s.name}`}
+                                value={s.role}
+                                disabled={!s.is_active}
+                                onChange={(event) => {
+                                  const role = event.target.value;
+                                  if (role === "manager" || role === "sales_rep") {
+                                    void updateStaffMember(s, { role });
+                                  }
+                                }}
+                                className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200"
+                              >
+                                <option value="manager">Manager</option>
+                                <option value="sales_rep">Sales representative</option>
+                              </select>
+                              <button
+                                onClick={() => updateStaffMember(s, { is_active: !s.is_active })}
+                                className="text-xs font-semibold text-blue-300 hover:text-blue-200"
+                              >
+                                {s.is_active ? "Deactivate" : "Reactivate"}
+                              </button>
+                            </>
+                          )}
+                          {s.role !== "dealership_admin" && s.is_active && (
+                            <button
+                              onClick={() => removeStaffMember(s)}
+                              className="text-xs font-semibold text-rose-300 hover:text-rose-200"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -183,7 +282,7 @@ export default function StaffPage() {
                 <tbody>
                   {invitations.map((inv) => (
                     <tr key={inv.id}>
-                      <td className="font-bold text-white text-xs">{inv.name}</td>
+                      <td className="font-bold text-white text-xs">                      {inv.name || inv.email}</td>
                       <td className="text-slate-300 font-mono text-xs">{inv.email}</td>
                       <td>
                         <span className="badge badge-neutral">
@@ -192,7 +291,7 @@ export default function StaffPage() {
                       </td>
                       <td>
                         <span className="badge badge-success flex items-center gap-1">
-                          <CheckCircle2 className="h-3 w-3" /> Delivered (Resend)
+                          <CheckCircle2 className="h-3 w-3" /> {inv.delivery_status.replaceAll("_", " ")}
                         </span>
                       </td>
                       <td className="text-slate-400 text-xs">

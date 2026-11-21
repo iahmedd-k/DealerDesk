@@ -27,7 +27,7 @@ are adapter-based extensions.
 | FR-001 | Authentication and roles | Users can sign in and receive access appropriate to `dealerdesk_admin`, `dealership_admin`, `manager`, `sales_rep`, or `customer`. | **Implemented** |
 | FR-002 | Dealership workspace | Authorized dealership administrators can view and update profile, contact details, business hours, and supported channels. Platform admin can list all workspaces. | **Implemented** |
 | FR-003 | Brand and vehicle catalog | Staff can manage brands, models, model years, variants, specifications, features, published vehicle content, and ordered vehicle images. | **Implemented** |
-| FR-004 | Inventory management | Staff can add stock units and update status among `available`, `reserved`, `sold`, and `unavailable`; each change is recorded. | **Implemented** |
+| FR-004 | Inventory management | Staff can add stock units and update status among `available`, `reserved`, `sold`, and `unavailable`; each change is recorded. | **Partially implemented** — availability is a boolean; lifecycle states/history are not yet modeled. |
 
 ### Knowledge and conversations
 
@@ -46,9 +46,9 @@ are adapter-based extensions.
 
 | ID | Requirement | Acceptance statement | Status |
 | --- | --- | --- | --- |
-| FR-013 | Lead capture | With consent, the system creates a lead containing contact details, vehicle interest, budget, timeline, channel, and conversation reference. | Planned |
-| FR-014 | Lead management | Staff can view, assign, filter, and update lead status: `new`, `contacted`, `qualified`, `test_drive_scheduled`, `won`, `lost`, or `follow_up`. | Planned |
-| FR-015 | Lead assignment | Managers can assign leads manually; configurable brand or round-robin rules can assign new leads to available representatives. | Planned |
+| FR-013 | Lead capture | With consent, the system creates a lead containing contact details, vehicle interest, budget, timeline, channel, and conversation reference. | **Partially implemented** — the assistant follow-up form stores name, email, optional phone/vehicle, inquiry, channel, and consent; budget, timeline, and persistent conversation linkage remain missing. |
+| FR-014 | Lead management | Staff can view, assign, filter, and update lead status: `new`, `contacted`, `qualified`, `test_drive_scheduled`, `won`, `lost`, or `follow_up`. | **Partially implemented** — dealership-scoped list, status filters, assignment, follow-up time, and booking linkage are available; richer CRM history and pagination metadata remain missing. |
+| FR-015 | Lead assignment | Managers can assign leads manually; configurable brand or round-robin rules can assign new leads to available representatives. | **Partially implemented** — manual assignment to active dealership staff is supported; automated assignment rules are not. |
 | FR-016 | Test-drive availability | The backend exposes slots based on business hours, capacity, and existing bookings. Supports query filters by vehicle, date range, and availability. | **Implemented** |
 | FR-017 | Test-drive booking | Customers book only after explicit confirmation; backend concurrency validation prevents over-capacity, double booking, and overlapping times. | **Implemented** |
 | FR-018 | Booking management | Authorized staff can view, reschedule, and cancel bookings across the dealership. Customer changes use demo-appropriate identity/contact verification. | **Implemented** |
@@ -81,13 +81,13 @@ are adapter-based extensions.
 
 ### Inquiry to lead
 
-1. Customer starts website chat or WhatsApp.
+1. Customer starts website chat (WhatsApp remains planned).
 2. Router identifies intent and brand/model or asks a clarification.
 3. Brand agent retrieves approved content and structured catalog data.
 4. Availability and price come from backend tools, never model guesses.
-5. Agent asks qualification questions.
-6. After consent, backend creates the lead and returns a reference.
-7. Conversation and customer context remain available to staff.
+5. Customer can request a dealership follow-up and enter contact details.
+6. After explicit contact consent, backend creates a dealership-scoped lead.
+7. Staff can assign the lead, set status/follow-up, and link a matching test-drive booking. Conversation persistence and association remain planned.
 
 ### Lead to test drive
 

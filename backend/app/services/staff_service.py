@@ -47,6 +47,8 @@ def invite_staff(
     email = str(payload.email).lower()
     now = datetime.now(timezone.utc)
     temporary_password = secrets.token_urlsafe(16)
+    raw_activation_token = secrets.token_urlsafe(48)
+    activation_token_hash = auth_service.hash_token(raw_activation_token)
     invited_user = user_repository.get_by_email(db, email)
     invitation: StaffInvitation
     try:
@@ -80,7 +82,7 @@ def invite_staff(
             invitation.invited_by_user_id = current_user.id
             invitation.email = email
             invitation.role = payload.role
-            invitation.activation_token = secrets.token_urlsafe(48)
+            invitation.activation_token = activation_token_hash
             invitation.expires_at = now + timedelta(days=2)
             invitation.accepted_at = None
             invitation.revoked_at = None
@@ -94,7 +96,7 @@ def invite_staff(
                 email=email,
                 role=payload.role,
                 password=auth_service.hash_password(temporary_password),
-                activation_token=secrets.token_urlsafe(48),
+                activation_token=activation_token_hash,
                 expires_at=now + timedelta(days=2),
             )
     except IntegrityError as exc:
@@ -106,7 +108,7 @@ def invite_staff(
         recipient=invitation.email,
         dealership_name=dealership.name if dealership else "your dealership",
         temporary_password=temporary_password,
-        activation_token=invitation.activation_token,
+        activation_token=raw_activation_token,
     )
     return StaffInvitationResponse(
         id=invitation.id,

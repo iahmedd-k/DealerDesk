@@ -10,6 +10,11 @@ def ensure_role(current_user: User, *roles: str) -> None:
         raise ForbiddenError("This role cannot perform the requested operation")
 
 
+def ensure_dealerdesk_admin(current_user: User) -> None:
+    if current_user.role != DEALERDESK_ADMIN_ROLE:
+        raise ForbiddenError("DealerDesk superadmin access is required")
+
+
 def ensure_dealership_access(current_user: User, dealership_id: int) -> None:
     if current_user.role == DEALERDESK_ADMIN_ROLE:
         return

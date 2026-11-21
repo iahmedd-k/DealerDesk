@@ -1,6 +1,6 @@
 # Data Model
 
-The persistence model is defined by SQLAlchemy declarative models in `app/models/user.py` and `app/models/workspace.py`. All tables live in the PostgreSQL schema selected by `DATABASE_SCHEMA` (or the connection default), and are created automatically at startup.
+The persistence model is defined by SQLAlchemy declarative models in `app/models/user.py` and `app/models/workspace.py`. Tables live in the PostgreSQL schema selected by `DATABASE_SCHEMA` (or the connection default) and are evolved through Alembic migrations. Tests create isolated schemas from model metadata.
 
 ## Entity-relationship diagram
 
@@ -12,22 +12,26 @@ erDiagram
     DEALERSHIPS ||--|| TEST_DRIVE_SETTINGS : configures
     DEALERSHIPS ||--o{ TEST_DRIVE_SLOTS : schedules
     DEALERSHIPS ||--o{ TEST_DRIVE_BOOKINGS : receives
+    DEALERSHIPS ||--o{ CUSTOMER_LEADS : tracks
     DEALERSHIPS ||--o{ STAFF_INVITATIONS : issues
     DEALERSHIPS ||--o{ KNOWLEDGE_DOCUMENTS : indexes
 
     BRANDS ||--o{ VEHICLES : classifies
     VEHICLES ||--o{ TEST_DRIVE_SLOTS : offers
     VEHICLES ||--o{ TEST_DRIVE_BOOKINGS : reserved_for
+    VEHICLES ||--o{ CUSTOMER_LEADS : requested
 
     USERS ||--o{ REFRESH_TOKENS : owns
     USERS ||--o{ REVOKED_ACCESS_TOKENS : revokes
     USERS ||--o{ PASSWORD_RESET_TOKENS : requests
     USERS ||--|| USER_TOKEN_VERSIONS : tracks
     USERS ||--o{ TEST_DRIVE_BOOKINGS : books
+    USERS ||--o{ CUSTOMER_LEADS : contacts_or_owns
     USERS ||--|| STAFF_INVITATIONS : activates
     USERS ||--o{ KNOWLEDGE_DOCUMENTS : uploads
 
     TEST_DRIVE_SLOTS ||--o{ TEST_DRIVE_BOOKINGS : contains
+    TEST_DRIVE_BOOKINGS ||--o| CUSTOMER_LEADS : converts
     BRANDS ||--o{ KNOWLEDGE_DOCUMENTS : scopes
     KNOWLEDGE_DOCUMENTS ||--o{ KNOWLEDGE_CHUNKS : contains
 ```
@@ -57,7 +61,7 @@ Single-use refresh tokens for sessions.
 | --- | --- | --- | --- |
 | `id` | integer | PK | |
 | `user_id` | integer | FK → `users.id`, indexed | |
-| `token` | varchar(128) | unique, indexed | Random URL-safe token, stored in plaintext |
+| `token` | varchar(128) | unique, indexed | SHA-256 digest of the random URL-safe token |
 | `expires_at` | timestamptz | not null | 30-day lifetime at issue |
 | `revoked_at` | timestamptz | nullable | Set on rotation or logout |
 
@@ -87,7 +91,7 @@ Per-user token version used to invalidate all outstanding access tokens.
 | --- | --- | --- | --- |
 | `id` | integer | PK | |
 | `user_id` | integer | FK → `users.id`, indexed | |
-| `token` | varchar(128) | unique, indexed | One-hour lifetime |
+| `token` | varchar(128) | unique, indexed | SHA-256 digest; one-hour lifetime |
 | `expires_at` | timestamptz | not null | |
 | `used_at` | timestamptz | nullable | Single use |
 
@@ -113,7 +117,7 @@ Per-user token version used to invalidate all outstanding access tokens.
 | `user_id` | integer | FK → `users.id`, unique | One invitation record per user |
 | `email` | varchar(320) | indexed | |
 | `role` | varchar(32) | not null | `manager` or `sales_rep` |
-| `activation_token` | varchar(128) | unique, indexed | Two-day lifetime |
+| `activation_token` | varchar(128) | unique, indexed | SHA-256 digest; two-day lifetime |
 | `expires_at` | timestamptz | not null | |
 | `accepted_at` | timestamptz | nullable | |
 | `revoked_at` | timestamptz | nullable | |
@@ -229,6 +233,29 @@ Constraint: `uq_test_drive_slot` — unique `(dealership_id, vehicle_id, starts_
 
 Index: `uq_test_drive_booking_active_customer` — unique on `(slot_id, customer_id)` where `status = 'booked'`. This prevents a customer holding two active bookings for the same slot while allowing re-booking after cancellation.
 
+### `customer_leads`
+
+Dealership-scoped customer inquiries. Follow-up contact is recorded only when
+the customer explicitly consents. A lead can be assigned to active dealership
+staff and linked to at most one matching test-drive booking.
+
+| Column | Type | Constraints | Notes |
+| --- | --- | --- | --- |
+| `id` | integer | PK, indexed | |
+| `dealership_id` | integer | FK → `dealerships.id`, indexed | Tenant boundary |
+| `customer_id` | integer | FK → `users.id`, nullable, indexed | Set for authenticated customers |
+| `requested_vehicle_id` | integer | FK → `vehicles.id`, nullable, indexed | |
+| `assigned_to_user_id` | integer | FK → `users.id`, nullable, indexed | Must be active staff in the same dealership |
+| `test_drive_booking_id` | integer | FK → `test_drive_bookings.id`, nullable, unique | Only a booking matching the lead's customer email can be linked |
+| `name`, `email`, `phone` | varchar | name/email required; phone nullable | Inquiry contact details |
+| `message` | text | not null | Customer's inquiry |
+| `source` | varchar(24) | default `website` | `website`, `assistant`, `phone`, `walk_in`, or `referral` |
+| `status` | varchar(24) | default `new` | `new`, `contacted`, `qualified`, `test_drive_scheduled`, `won`, `lost`, or `follow_up` |
+| `consent_to_contact` | boolean | not null | Database check requires `consented_at` when true |
+| `consented_at` | timestamptz | nullable | Recorded by the server on lead creation |
+| `next_follow_up_at` | timestamptz | nullable, indexed | Staff-managed follow-up time |
+| `created_at`, `updated_at` | timestamptz | not null | |
+
 ## Lifecycle rules
 
 | Entity | Deactivate | Delete | Restore |
@@ -242,10 +269,10 @@ Index: `uq_test_drive_booking_active_customer` — unique on `(slot_id, customer
 
 ## Notes and constraints
 
-- `vehicles.brand_id` is nominally nullable in the model but is made `NOT NULL` by the startup migration after backfilling legacy `make` values.
-- Knowledge documents and chunks are created by `create_all` at startup. The configured embedding model name is stored per document; changing models means old documents must be re-uploaded before they can be searched with the new model.
+- `vehicles.brand_id` is non-null and enforced by the model and database after legacy `make` values are backfilled.
+- Knowledge documents and chunks are persisted in the configured schema. The configured embedding model name is stored per document; changing models means old documents must be re-uploaded before they can be searched with the new model.
 - Vehicle money is stored as a fixed-precision `numeric(12,2)` value and handled as `Decimal` in the backend.
-- Refresh tokens and invitation/password-reset tokens are stored as plaintext random strings. Only access tokens are hashed for revocation.
+- Refresh, invitation, and password-reset tokens are stored as SHA-256 digests; only raw tokens are returned to clients or email providers.
 - The test suite recreates its schema per test, so all constraints above are exercised against real PostgreSQL.
 
 ## Related documents

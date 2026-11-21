@@ -21,12 +21,14 @@ import {
 import Shell from "../components/Shell";
 import { useAuth } from "../providers";
 import { api } from "../api";
-import { MOCK_BRANDS, MOCK_VEHICLES, Vehicle, Brand } from "../lib/mockData";
+import type { Vehicle, VehicleImage, Brand } from "../lib/types";
 
 export default function InventoryPage() {
   const { user, activeDealershipId } = useAuth();
-  const [vehicles, setVehicles] = useState<Vehicle[]>(MOCK_VEHICLES);
-  const [brands, setBrands] = useState<Brand[]>(MOCK_BRANDS);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [brands, setBrands] = useState<Brand[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedBrand, setSelectedBrand] = useState<number | "all">("all");
   const [availabilityFilter, setAvailabilityFilter] = useState<"all" | "available" | "unavailable">("all");
@@ -35,34 +37,75 @@ export default function InventoryPage() {
   // Modal states
   const [showAddModal, setShowAddModal] = useState(false);
   const [inspectVehicle, setInspectVehicle] = useState<Vehicle | null>(null);
+  const [imageBusy, setImageBusy] = useState(false);
+  const [imageFile, setImageFile] = useState<File | null>(null);
 
   // New vehicle form state
   const [newVehicle, setNewVehicle] = useState({
-    brand_id: 1,
+    brand_id: 0,
     model: "",
-    model_year: 2024,
+    model_year: new Date().getFullYear(),
     variant: "",
     description: "",
-    price: 35000,
-    stock_number: `STK-${Date.now().toString().slice(-4)}`,
-    test_drive_enabled: true,
+    price: 0,
+    stock_number: "",
+    test_drive_enabled: false,
   });
 
   const isStaff = user && user.role !== "customer";
 
   useEffect(() => {
-    api<Vehicle[]>(`/dealerships/${activeDealershipId}/vehicles`)
-      .then((data) => {
-        if (Array.isArray(data) && data.length) setVehicles(data);
-      })
-      .catch(() => {});
+    if (!activeDealershipId) {
+      setLoading(false);
+      setError("Select a dealership workspace to view inventory.");
+      return;
+    }
 
-    api<Brand[]>(`/dealerships/${activeDealershipId}/brands`)
-      .then((data) => {
-        if (Array.isArray(data) && data.length) setBrands(data);
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    const loadInventory = user?.role === "customer"
+      ? api<Vehicle[]>(`/dealerships/${activeDealershipId}/vehicles/public`).then((items) => {
+          const nextBrands = Array.from(
+            new Map(items.map((item) => [item.brand_id, {
+              id: item.brand_id,
+              dealership_id: item.dealership_id,
+              name: item.make,
+              logo_url: null,
+              is_active: true,
+              is_deleted: false,
+            }])).values(),
+          );
+          return [items, nextBrands] as const;
+        })
+      : Promise.all([
+          api<Vehicle[]>(`/dealerships/${activeDealershipId}/vehicles`),
+          api<Brand[]>(`/dealerships/${activeDealershipId}/brands`),
+        ]);
+    loadInventory
+      .then(([nextVehicles, nextBrands]) => {
+        if (cancelled) return;
+        setVehicles(nextVehicles);
+        setBrands(nextBrands);
       })
-      .catch(() => {});
-  }, [activeDealershipId]);
+      .catch((cause: unknown) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : "Could not load inventory.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDealershipId, user?.role]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const bName = new URLSearchParams(window.location.search).get("brand");
+    const found = brands.find((brand) => brand.name.toLowerCase() === bName?.toLowerCase());
+    if (found) setSelectedBrand(found.id);
+  }, [brands]);
 
   // Filtering
   const filteredVehicles = vehicles.filter((v) => {
@@ -81,58 +124,138 @@ export default function InventoryPage() {
     return matchesSearch && matchesBrand && matchesAvailability;
   });
 
-  function handleCreateVehicle(e: React.FormEvent) {
+  async function handleCreateVehicle(e: React.FormEvent) {
     e.preventDefault();
-    const brand = brands.find((b) => b.id === Number(newVehicle.brand_id)) || brands[0];
-    const created: Vehicle = {
-      id: Math.floor(Math.random() * 9000) + 1000,
-      dealership_id: activeDealershipId,
-      brand_id: Number(newVehicle.brand_id),
-      make: brand.name,
-      model: newVehicle.model,
-      model_year: Number(newVehicle.model_year),
-      variant: newVehicle.variant,
-      description: newVehicle.description,
-      price: Number(newVehicle.price),
-      stock_number: newVehicle.stock_number,
-      is_available: true,
-      test_drive_enabled: newVehicle.test_drive_enabled,
-      images: [
-        {
-          id: 99,
-          vehicle_id: 1000,
-          public_url: "https://images.unsplash.com/photo-1549399542-7e3f8b79c341?auto=format&fit=crop&w=800&q=80",
-          media_type: "image/jpeg",
-          alt_text: newVehicle.model,
-          position: 0,
-        },
-      ],
-    };
-
-    setVehicles([created, ...vehicles]);
-    setShowAddModal(false);
-    setNewVehicle({
-      brand_id: 1,
-      model: "",
-      model_year: 2024,
-      variant: "",
-      description: "",
-      price: 35000,
-      stock_number: `STK-${Date.now().toString().slice(-4)}`,
-      test_drive_enabled: true,
-    });
+    if (!activeDealershipId) return;
+    setError("");
+    try {
+      const created = await api<Vehicle>(`/dealerships/${activeDealershipId}/vehicles`, {
+        method: "POST",
+        body: JSON.stringify({
+          ...newVehicle,
+          brand_id: Number(newVehicle.brand_id),
+          model_year: Number(newVehicle.model_year),
+          price: Number(newVehicle.price),
+          variant: newVehicle.variant || null,
+          description: newVehicle.description || null,
+        }),
+      });
+      setVehicles((current) => [created, ...current]);
+      setShowAddModal(false);
+      setNewVehicle({
+        brand_id: brands[0]?.id ?? 0,
+        model: "",
+        model_year: new Date().getFullYear(),
+        variant: "",
+        description: "",
+        price: 0,
+        stock_number: "",
+        test_drive_enabled: false,
+      });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save this vehicle.");
+    }
   }
 
-  function toggleAvailability(id: number) {
-    setVehicles(
-      vehicles.map((v) => (v.id === id ? { ...v, is_available: !v.is_available } : v))
+  async function toggleAvailability(vehicle: Vehicle) {
+    if (!activeDealershipId) return;
+    setError("");
+    try {
+      const updated = await api<Vehicle>(
+        `/dealerships/${activeDealershipId}/vehicles/${vehicle.id}/availability?available=${!vehicle.is_available}`,
+        { method: "PATCH" },
+      );
+      setVehicles((current) => current.map((item) => item.id === updated.id ? updated : item));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update vehicle availability.");
+    }
+  }
+
+  async function toggleTestDrive(vehicle: Vehicle) {
+    if (!activeDealershipId) return;
+    setError("");
+    try {
+      const updated = await api<Vehicle>(`/dealerships/${activeDealershipId}/vehicles/${vehicle.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ test_drive_enabled: !vehicle.test_drive_enabled }),
+      });
+      setVehicles((current) => current.map((item) => item.id === updated.id ? updated : item));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update test-drive availability.");
+    }
+  }
+
+  async function refreshVehicleImages(vehicleId: number) {
+    if (!activeDealershipId) return;
+    const images = await api<VehicleImage[]>(
+      `/dealerships/${activeDealershipId}/vehicles/${vehicleId}/images`,
+    );
+    setVehicles((current) =>
+      current.map((item) => item.id === vehicleId ? { ...item, images } : item),
+    );
+    setInspectVehicle((current) =>
+      current?.id === vehicleId ? { ...current, images } : current,
     );
   }
 
-  function toggleTestDrive(id: number) {
-    setVehicles(
-      vehicles.map((v) => (v.id === id ? { ...v, test_drive_enabled: !v.test_drive_enabled } : v))
-    );
+  async function handleUploadImage(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!activeDealershipId || !inspectVehicle || !imageFile) return;
+    const form = event.currentTarget;
+    setImageBusy(true);
+    setError("");
+    try {
+      const body = new FormData();
+      body.append("file", imageFile);
+      await api<VehicleImage>(
+        `/dealerships/${activeDealershipId}/vehicles/${inspectVehicle.id}/images`,
+        { method: "POST", body },
+      );
+      setImageFile(null);
+      form.reset();
+      await refreshVehicleImages(inspectVehicle.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not upload the vehicle image.");
+    } finally {
+      setImageBusy(false);
+    }
+  }
+
+  async function updateImage(
+    image: VehicleImage,
+    changes: { position?: number; alt_text?: string | null },
+  ) {
+    if (!activeDealershipId || !inspectVehicle) return;
+    setImageBusy(true);
+    setError("");
+    try {
+      await api<VehicleImage>(
+        `/dealerships/${activeDealershipId}/vehicles/${inspectVehicle.id}/images/${image.id}`,
+        { method: "PATCH", body: JSON.stringify(changes) },
+      );
+      await refreshVehicleImages(inspectVehicle.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update the vehicle image.");
+    } finally {
+      setImageBusy(false);
+    }
+  }
+
+  async function deleteImage(image: VehicleImage) {
+    if (!activeDealershipId || !inspectVehicle) return;
+    setImageBusy(true);
+    setError("");
+    try {
+      await api<void>(
+        `/dealerships/${activeDealershipId}/vehicles/${inspectVehicle.id}/images/${image.id}`,
+        { method: "DELETE" },
+      );
+      await refreshVehicleImages(inspectVehicle.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not remove the vehicle image.");
+    } finally {
+      setImageBusy(false);
+    }
   }
 
   return (
@@ -143,12 +266,12 @@ export default function InventoryPage() {
           <div className="flex items-center gap-2 mb-1">
             <span className="h-2 w-2 rounded-full bg-blue-500" />
             <p className="text-xs font-bold uppercase tracking-wider text-blue-400">
-              ERP Fleet Master
+              Dealership Inventory
             </p>
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-white">Vehicle Inventory</h1>
           <p className="text-xs text-slate-400">
-            {filteredVehicles.length} vehicles matching criteria • Multi-image galleries & test-drive controls
+            {filteredVehicles.length} vehicles match the current filters
           </p>
         </div>
 
@@ -182,6 +305,18 @@ export default function InventoryPage() {
           )}
         </div>
       </div>
+
+      {error && (
+        <div role="alert" className="mb-4 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">
+          {error}
+        </div>
+      )}
+      {loading && <p className="mb-4 text-xs text-slate-400">Loading inventory...</p>}
+      {!loading && !error && vehicles.length === 0 && (
+        <p className="mb-4 rounded-lg border border-slate-800 bg-slate-900 p-4 text-sm text-slate-400">
+          No vehicles are registered in this dealership yet.
+        </p>
+      )}
 
       {/* Filter & Search Toolbar */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-6 flex flex-col md:flex-row gap-3 items-center justify-between shadow-sm">
@@ -280,7 +415,7 @@ export default function InventoryPage() {
                   <td className="font-bold text-white">${Number(v.price).toLocaleString()}</td>
                   <td>
                     <button
-                      onClick={() => isStaff && toggleAvailability(v.id)}
+                      onClick={() => isStaff && toggleAvailability(v)}
                       disabled={!isStaff}
                       className={`badge cursor-pointer ${
                         v.is_available ? "badge-success" : "badge-neutral"
@@ -291,7 +426,7 @@ export default function InventoryPage() {
                   </td>
                   <td>
                     <button
-                      onClick={() => isStaff && toggleTestDrive(v.id)}
+                      onClick={() => isStaff && toggleTestDrive(v)}
                       disabled={!isStaff}
                       className={`badge cursor-pointer ${
                         v.test_drive_enabled ? "badge-info" : "badge-neutral"
@@ -428,15 +563,82 @@ export default function InventoryPage() {
                   <p className="font-semibold text-slate-300">Media Gallery ({inspectVehicle.images.length})</p>
                   <div className="grid grid-cols-2 gap-2">
                     {inspectVehicle.images.map((img) => (
-                      <div key={img.id} className="relative rounded-lg overflow-hidden border border-slate-700 h-32 bg-slate-800">
-                        <img src={img.public_url} alt={img.alt_text || "Vehicle image"} className="h-full w-full object-cover" />
-                        <span className="absolute bottom-1.5 left-1.5 bg-slate-900/80 px-1.5 py-0.5 rounded text-[10px] text-slate-300">
-                          Pos #{img.position}
-                        </span>
+                      <div key={img.id} className="overflow-hidden rounded-lg border border-slate-700 bg-slate-900">
+                        <img src={img.public_url} alt={img.alt_text || "Vehicle image"} className="h-32 w-full object-cover" />
+                        <div className="space-y-2 p-2">
+                          <label className="block text-[10px] text-slate-400">
+                            Alt text
+                            <input
+                              value={img.alt_text || ""}
+                              maxLength={255}
+                              disabled={!isStaff || imageBusy}
+                              onChange={(event) => {
+                                const alt_text = event.target.value || null;
+                                setInspectVehicle((current) => current && ({
+                                  ...current,
+                                  images: current.images?.map((item) =>
+                                    item.id === img.id ? { ...item, alt_text } : item,
+                                  ),
+                                }));
+                              }}
+                              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-200"
+                            />
+                          </label>
+                          {isStaff && (
+                            <div className="flex flex-wrap gap-1">
+                              <button
+                                disabled={imageBusy || img.position === 0}
+                                onClick={() => updateImage(img, { position: img.position - 1 })}
+                                className="btn-secondary px-2 py-1"
+                              >
+                                Move up
+                              </button>
+                              <button
+                                disabled={imageBusy || img.position === (inspectVehicle.images?.length ?? 0) - 1}
+                                onClick={() => updateImage(img, { position: img.position + 1 })}
+                                className="btn-secondary px-2 py-1"
+                              >
+                                Move down
+                              </button>
+                              <button
+                                disabled={imageBusy}
+                                onClick={() => updateImage(img, { alt_text: img.alt_text })}
+                                className="btn-secondary px-2 py-1"
+                              >
+                                Save alt text
+                              </button>
+                              <button
+                                disabled={imageBusy}
+                                onClick={() => deleteImage(img)}
+                                className="rounded border border-rose-500/30 px-2 py-1 text-rose-300 disabled:opacity-50"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
                 </div>
+              )}
+              {isStaff && (
+                <form onSubmit={handleUploadImage} className="flex flex-wrap items-end gap-2 rounded-lg border border-slate-800 bg-slate-950 p-3">
+                  <label className="min-w-[220px] flex-1 text-[10px] text-slate-400">
+                    Add vehicle image
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      disabled={imageBusy}
+                      required
+                      onChange={(event) => setImageFile(event.target.files?.[0] ?? null)}
+                      className="mt-1 block w-full text-xs text-slate-300"
+                    />
+                  </label>
+                  <button disabled={imageBusy || !imageFile} className="btn-primary disabled:opacity-50">
+                    {imageBusy ? "Saving..." : "Upload image"}
+                  </button>
+                </form>
               )}
 
               <div className="grid grid-cols-2 gap-3 bg-slate-950 p-3 rounded-lg border border-slate-800">

@@ -31,7 +31,6 @@ from app.services import dealership_service
 
 logger = logging.getLogger(__name__)
 MAX_LOGO_SIZE = 3 * 1024 * 1024
-MAX_BRANDS_PER_DEALERSHIP = 20
 
 
 def list_brands(
@@ -70,13 +69,14 @@ def create_brand(
         dealership_id,
         *DEALERSHIP_MANAGEMENT_ROLES,
     )
-    if brand_repository.lock_active_dealership(db, dealership_id) is None:
+    dealership = brand_repository.lock_active_dealership(db, dealership_id)
+    if dealership is None:
         raise NotFoundError("Dealership not found")
     if (
         brand_repository.count_not_deleted(db, dealership_id)
-        >= MAX_BRANDS_PER_DEALERSHIP
+        >= dealership.max_brands
     ):
-        raise ConflictError("A dealership can have at most 20 brands")
+        raise ConflictError("This dealership has reached its brand limit")
     try:
         return brand_repository.create(
             db,
@@ -98,16 +98,17 @@ def restore_brand(
         dealership_id,
         *DEALERSHIP_MANAGEMENT_ROLES,
     )
-    if brand_repository.lock_active_dealership(db, dealership_id) is None:
+    dealership = brand_repository.lock_active_dealership(db, dealership_id)
+    if dealership is None:
         raise NotFoundError("Dealership not found")
     brand = _get_brand(db, dealership_id, brand_id, include_deleted=True)
     if not brand.is_deleted:
         raise ConflictError("Brand is not deleted")
     if (
         brand_repository.count_not_deleted(db, dealership_id)
-        >= MAX_BRANDS_PER_DEALERSHIP
+        >= dealership.max_brands
     ):
-        raise ConflictError("A dealership can have at most 20 brands")
+        raise ConflictError("This dealership has reached its brand limit")
     brand.is_deleted = False
     brand.is_active = False
     try:

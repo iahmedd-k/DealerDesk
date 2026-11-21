@@ -227,7 +227,6 @@ def test_fr016_fr017_testdrive_availability_and_booking(client, seeded_users) ->
     assert len(generated_slots) >= 2
 
     slot1 = generated_slots[0]
-    slot2 = generated_slots[1]
 
     # FR-016: Verify availability fields
     assert slot1["capacity"] == 1
@@ -259,6 +258,70 @@ def test_fr016_fr017_testdrive_availability_and_booking(client, seeded_users) ->
         json={"confirmed": True},
     )
     assert booking1.status_code == 201
+    booking_details = booking1.json()
+    assert booking_details["customer_email"] == CUSTOMER_DEMO_EMAIL
+    assert booking_details["vehicle_name"] == (
+        f"{vehicle_res.json()['model_year']} "
+        f"{vehicle_res.json()['make']} {vehicle_res.json()['model']}"
+    )
+    assert booking_details["starts_at"] == slot1["starts_at"]
+    assert booking_details["ends_at"] == slot1["ends_at"]
+
+    lead_path = f"/api/v1/dealerships/{dealership_id}/leads"
+    invalid_lead = client.post(
+        lead_path,
+        json={
+            "name": "Demo Customer",
+            "email": CUSTOMER_DEMO_EMAIL,
+            "message": "Please contact me about this vehicle.",
+            "consent_to_contact": False,
+        },
+    )
+    assert invalid_lead.status_code == 422
+
+    lead_response = client.post(
+        lead_path,
+        headers=customer_headers,
+        json={
+            "name": "Demo Customer",
+            "email": CUSTOMER_DEMO_EMAIL,
+            "message": "Please contact me about this vehicle.",
+            "source": "assistant",
+            "requested_vehicle_id": vehicle_id,
+            "consent_to_contact": True,
+        },
+    )
+    assert lead_response.status_code == 201
+    lead_id = lead_response.json()["id"]
+    assert lead_response.json()["consented_at"] is not None
+    assert client.get(lead_path, headers=customer_headers).status_code == 403
+    assert client.patch(
+        f"{lead_path}/{lead_id}",
+        headers=admin_headers,
+        json={},
+    ).status_code == 400
+
+    assigned_lead = client.patch(
+        f"/api/v1/dealerships/{dealership_id}/leads/{lead_id}",
+        headers=admin_headers,
+        json={
+            "status": "qualified",
+            "assigned_to_user_id": seeded_users[1].id,
+            "next_follow_up_at": "2030-01-02T10:00:00Z",
+        },
+    )
+    assert assigned_lead.status_code == 200
+    assert assigned_lead.json()["status"] == "qualified"
+    assert assigned_lead.json()["assigned_to_user_id"] == seeded_users[1].id
+
+    converted_lead = client.post(
+        f"/api/v1/dealerships/{dealership_id}/leads/{lead_id}/convert",
+        headers=admin_headers,
+        json={"booking_id": booking1.json()["id"]},
+    )
+    assert converted_lead.status_code == 200
+    assert converted_lead.json()["status"] == "test_drive_scheduled"
+    assert converted_lead.json()["test_drive_booking_id"] == booking1.json()["id"]
 
     # Check slot capacity updated
     slot1_updated = client.get(

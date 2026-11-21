@@ -4,18 +4,18 @@
 
 :root {
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --bg-primary: #0b0f19;
-  --bg-secondary: #111827;
-  --bg-card: #1f2937;
-  --border: #374151;
-  --border-subtle: #242e3d;
-  --text-main: #f9fafb;
-  --text-muted: #9ca3af;
-  --accent-blue: #3b82f6;
-  --accent-blue-hover: #2563eb;
-  --success: #10b981;
-  --warning: #f59e0b;
-  --danger: #ef4444;
+  --bg-primary: #f4f8f5;
+  --bg-secondary: #ffffff;
+  --bg-card: #ffffff;
+  --border: #dfe8e1;
+  --border-subtle: #e9f0ea;
+  --text-main: #1d2b22;
+  --text-muted: #65766a;
+  --accent-green: #2f6d46;
+  --accent-green-hover: #285b3d;
+  --success: #28734a;
+  --warning: #a45b0a;
+  --danger: #b42332;
 }
 
 * {
@@ -25,8 +25,8 @@
 html, body {
   margin: 0;
   padding: 0;
-  background-color: #0d1117;
-  color: #e6edf3;
+  background-color: var(--bg-primary);
+  color: var(--text-main);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
@@ -42,14 +42,14 @@ a {
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #111827;
+  background: #edf3ee;
 }
 ::-webkit-scrollbar-thumb {
-  background: #374151;
-  border-radius: 3px;
+  background: #bdcbbf;
+  border-radius: 999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #4b5563;
+  background: #95a99a;
 }
 
 /* ERP Shell Layout */
@@ -60,14 +60,15 @@ a {
 
 .erp-sidebar {
   width: 260px;
-  background-color: #0f172a;
-  border-right: 1px solid #1e293b;
+  background-color: #ffffff;
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   position: sticky;
   top: 0;
   height: 100vh;
   z-index: 30;
+  box-shadow: 2px 0 12px rgba(27, 55, 37, 0.025);
 }
 
 .erp-main {
@@ -75,13 +76,13 @@ a {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background-color: #0b0f19;
+  background-color: var(--bg-primary);
 }
 
 .erp-header {
   height: 64px;
-  background-color: #0f172a;
-  border-bottom: 1px solid #1e293b;
+  background-color: rgba(255, 255, 255, 0.94);
+  border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -89,11 +90,12 @@ a {
   position: sticky;
   top: 0;
   z-index: 20;
+  backdrop-filter: blur(12px);
 }
 
 .erp-content {
-  padding: 28px 32px 64px;
-  max-width: 1400px;
+  padding: 30px 36px 64px;
+  max-width: 1480px;
   width: 100%;
   margin: 0 auto;
 }
@@ -102,7 +104,7 @@ a {
 h1, h2, h3, h4, h5, h6 {
   margin: 0;
   font-weight: 700;
-  color: #f8fafc;
+  color: var(--text-main);
 }
 
 .page-title {
@@ -112,22 +114,23 @@ h1, h2, h3, h4, h5, h6 {
 
 .page-subtitle {
   font-size: 13px;
-  color: #94a3b8;
+  color: var(--text-muted);
   margin-top: 4px;
 }
 
 /* Metric / KPI Card */
 .kpi-card {
-  background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
-  border: 1px solid #334155;
-  border-radius: 12px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 14px;
   padding: 20px;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
-  transition: transform 0.15s ease, border-color 0.15s ease;
+  box-shadow: 0 2px 8px rgba(27, 55, 37, 0.04);
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .kpi-card:hover {
-  border-color: #475569;
+  border-color: #b9cbbd;
+  box-shadow: 0 6px 18px rgba(27, 55, 37, 0.08);
   transform: translateY(-2px);
 }
 
@@ -144,42 +147,42 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .badge-success {
-  background-color: rgba(16, 185, 129, 0.15);
-  color: #34d399;
-  border: 1px solid rgba(16, 185, 129, 0.3);
+  background-color: #eaf5ed;
+  color: #24633d;
+  border: 1px solid #cfe7d4;
 }
 
 .badge-warning {
-  background-color: rgba(245, 158, 11, 0.15);
-  color: #fbbf24;
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  background-color: #fff5e7;
+  color: #8a4c0a;
+  border: 1px solid #f1ddb9;
 }
 
 .badge-info {
-  background-color: rgba(59, 130, 246, 0.15);
-  color: #60a5fa;
-  border: 1px solid rgba(59, 130, 246, 0.3);
+  background-color: #edf5ef;
+  color: #315e3d;
+  border: 1px solid #d5e6d8;
 }
 
 .badge-danger {
-  background-color: rgba(239, 68, 68, 0.15);
-  color: #f87171;
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  background-color: #fff0ef;
+  color: #a3292e;
+  border: 1px solid #f2d2cf;
 }
 
 .badge-neutral {
-  background-color: rgba(148, 163, 184, 0.15);
-  color: #94a3b8;
-  border: 1px solid rgba(148, 163, 184, 0.25);
+  background-color: #f0f4f1;
+  color: #536459;
+  border: 1px solid #dfe8e1;
 }
 
 /* ERP Data Tables */
 .erp-table-container {
-  background-color: #0f172a;
-  border: 1px solid #1e293b;
-  border-radius: 12px;
+  background-color: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 14px;
   overflow: hidden;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 2px 8px rgba(27, 55, 37, 0.04);
 }
 
 .erp-table {
@@ -190,20 +193,20 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .erp-table th {
-  background-color: #1e293b;
-  color: #94a3b8;
+  background-color: #f5f8f5;
+  color: #637368;
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   padding: 12px 16px;
-  border-bottom: 1px solid #334155;
+  border-bottom: 1px solid var(--border);
 }
 
 .erp-table td {
   padding: 14px 16px;
-  border-bottom: 1px solid #1e293b;
-  color: #e2e8f0;
+  border-bottom: 1px solid var(--border-subtle);
+  color: #26372b;
 }
 
 .erp-table tr:last-child td {
@@ -211,17 +214,17 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .erp-table tr:hover td {
-  background-color: #162032;
+  background-color: #f7faf7;
 }
 
 /* Button styles */
 .btn-primary {
-  background-color: #2563eb;
+  background-color: var(--accent-green);
   color: white;
   font-size: 13px;
   font-weight: 600;
   padding: 8px 16px;
-  border-radius: 8px;
+  border-radius: 9px;
   border: none;
   cursor: pointer;
   display: inline-flex;
@@ -231,17 +234,17 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .btn-primary:hover {
-  background-color: #1d4ed8;
+  background-color: var(--accent-green-hover);
 }
 
 .btn-secondary {
-  background-color: #1e293b;
-  color: #e2e8f0;
+  background-color: #ffffff;
+  color: #33463a;
   font-size: 13px;
   font-weight: 600;
   padding: 8px 16px;
   border-radius: 8px;
-  border: 1px solid #334155;
+  border: 1px solid #d5e0d8;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -250,16 +253,17 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .btn-secondary:hover {
-  background-color: #334155;
-  color: white;
+  background-color: #f2f6f2;
+  border-color: #bdcdbf;
+  color: #1d2b22;
 }
 
 /* Modal and Drawer backdrop */
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background-color: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(4px);
+  background-color: rgba(20, 38, 27, 0.38);
+  backdrop-filter: blur(5px);
   z-index: 50;
   display: flex;
   align-items: center;
@@ -268,11 +272,182 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .modal-content {
-  background-color: #0f172a;
-  border: 1px solid #334155;
-  border-radius: 14px;
+  background-color: #ffffff;
+  border: 1px solid #dfe8e1;
+  border-radius: 16px;
   width: 100%;
   max-width: 600px;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 24px 60px rgba(20, 38, 27, 0.18);
   overflow: hidden;
+}
+
+.auth-layout {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(ellipse at top left, rgba(102, 153, 113, 0.12), transparent 36%),
+    var(--bg-primary);
+}
+
+.auth-panel {
+  width: min(100%, 440px);
+  padding: 38px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 18px 50px rgba(27, 55, 37, 0.09);
+}
+
+.auth-panel .brand {
+  display: inline-block;
+  margin-bottom: 30px;
+  color: var(--text-main);
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+.auth-panel .brand span {
+  color: var(--accent-green);
+}
+
+.auth-panel h1 {
+  font-size: 26px;
+  letter-spacing: -0.035em;
+}
+
+.auth-panel .muted,
+.auth-footer {
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.auth-panel .form {
+  display: grid;
+  gap: 18px;
+  margin-top: 28px;
+}
+
+.auth-panel label {
+  display: grid;
+  gap: 7px;
+  color: #394a3e;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.auth-panel input {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 12px;
+  border: 1px solid #d4dfd7;
+  border-radius: 9px;
+  background: #fbfdfb;
+  color: var(--text-main);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.auth-panel input:focus {
+  border-color: #55916a;
+  box-shadow: 0 0 0 3px rgba(47, 109, 70, 0.12);
+}
+
+.auth-panel .button {
+  min-height: 43px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--accent-green);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.auth-panel .button:hover {
+  background: var(--accent-green-hover);
+}
+
+.auth-panel .button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.auth-footer {
+  margin-top: 22px;
+  text-align: center;
+}
+
+.auth-footer a {
+  color: var(--accent-green);
+  font-weight: 700;
+}
+
+.alert.error {
+  padding: 11px 12px;
+  border: 1px solid #f0ceca;
+  border-radius: 9px;
+  background: #fff2f0;
+  color: #a3292e;
+  font-size: 13px;
+}
+
+.text-white {
+  color: var(--text-main) !important;
+}
+
+.bg-blue-600.text-white,
+.bg-blue-500.text-white,
+.bg-indigo-600.text-white,
+.bg-indigo-500.text-white,
+.btn-primary {
+  color: #ffffff !important;
+}
+
+.bg-blue-600 .text-white,
+.bg-blue-500 .text-white,
+.bg-indigo-600 .text-white {
+  color: #ffffff !important;
+}
+
+.hover\:text-white:hover {
+  color: var(--text-main) !important;
+}
+
+.bg-slate-600 {
+  background-color: #dce5de !important;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid #4d8b60;
+  outline-offset: 2px;
+}
+
+@media (max-width: 768px) {
+  .erp-content {
+    padding: 22px 18px 48px;
+  }
+
+  .erp-header {
+    padding: 0 18px;
+  }
+
+  .auth-panel {
+    padding: 28px 24px;
+  }
 }

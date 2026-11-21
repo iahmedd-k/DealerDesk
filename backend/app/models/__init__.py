@@ -10,6 +10,7 @@ from app.models.user import (
 )
 from app.models.workspace import (
     Brand,
+    CustomerLead,
     Dealership,
     KnowledgeChunk,
     KnowledgeDocument,
@@ -24,6 +25,7 @@ from app.models.workspace import (
 __all__ = [
     "AuditLog",
     "Brand",
+    "CustomerLead",
     "Dealership",
     "KnowledgeChunk",
     "KnowledgeDocument",

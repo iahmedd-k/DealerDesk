@@ -12,14 +12,19 @@ from app.repositories import auth_repository
 from app.services import auth_service
 
 
-bearer_scheme = HTTPBearer()
+bearer_scheme = HTTPBearer(auto_error=False)
 optional_bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> User:
+    if credentials is None:
+        raise UnauthorizedError(
+            "Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     token = credentials.credentials
     try:
         user_id, token_version = auth_service.get_access_token_identity(token)
@@ -52,7 +57,4 @@ def get_optional_current_user(
 ) -> User | None:
     if credentials is None:
         return None
-    try:
-        return get_current_user(credentials, db)
-    except Exception:
-        return None
+    return get_current_user(credentials, db)

@@ -81,9 +81,10 @@ def login(db: Session, payload: LoginRequest) -> TokenResponse:
         )
     except RuntimeError as exc:
         raise ServiceUnavailableError(str(exc)) from exc
+    raw_refresh_token = secrets.token_urlsafe(48)
     refresh_token = RefreshToken(
         user_id=user.id,
-        token=secrets.token_urlsafe(48),
+        token=auth_service.hash_token(raw_refresh_token),
         expires_at=datetime.now(timezone.utc) + timedelta(days=30),
     )
     try:
@@ -93,7 +94,7 @@ def login(db: Session, payload: LoginRequest) -> TokenResponse:
         raise ConflictError("Unable to create refresh token") from exc
     return TokenResponse(
         access_token=access_token,
-        refresh_token=refresh_token.token,
+        refresh_token=raw_refresh_token,
     )
 
 
@@ -171,7 +172,10 @@ def refresh_access_token(
     payload: RefreshTokenRequest,
 ) -> TokenResponse:
     now = datetime.now(timezone.utc)
-    stored = auth_repository.get_refresh_token_for_update(db, payload.refresh_token)
+    stored = auth_repository.get_refresh_token_for_update(
+        db,
+        auth_service.hash_token(payload.refresh_token),
+    )
     if (
         stored is None
         or stored.revoked_at is not None
@@ -188,15 +192,16 @@ def refresh_access_token(
         )
     except RuntimeError as exc:
         raise ServiceUnavailableError(str(exc)) from exc
+    raw_refresh_token = secrets.token_urlsafe(48)
     replacement = RefreshToken(
         user_id=user.id,
-        token=secrets.token_urlsafe(48),
+        token=auth_service.hash_token(raw_refresh_token),
         expires_at=now + timedelta(days=30),
     )
     auth_repository.rotate_refresh_token(db, stored, replacement, now)
     return TokenResponse(
         access_token=access_token,
-        refresh_token=replacement.token,
+        refresh_token=raw_refresh_token,
     )
 
 
@@ -206,15 +211,16 @@ def request_password_reset(
 ) -> dict[str, str]:
     user = user_repository.get_by_email(db, str(payload.email).lower())
     if user is not None and user.is_active:
+        raw_reset_token = secrets.token_urlsafe(48)
         reset_token = PasswordResetToken(
             user_id=user.id,
-            token=secrets.token_urlsafe(48),
+            token=auth_service.hash_token(raw_reset_token),
             expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
         )
         auth_repository.save_password_reset_token(db, reset_token)
         delivery_status = send_password_reset(
             recipient=user.email,
-            reset_token=reset_token.token,
+            reset_token=raw_reset_token,
         )
         if delivery_status != "email_sent":
             auth_repository.delete_password_reset_token(db, reset_token)
@@ -229,7 +235,10 @@ def reset_password(
     db: Session,
     payload: PasswordResetConfirm,
 ) -> dict[str, str]:
-    reset = auth_repository.get_password_reset_token(db, payload.token)
+    reset = auth_repository.get_password_reset_token(
+        db,
+        auth_service.hash_token(payload.token),
+    )
     if reset is None or _utc(reset.expires_at) <= datetime.now(timezone.utc):
         raise BadRequestError("Invalid or expired password reset token")
     user = user_repository.get_by_id(db, reset.user_id)
@@ -245,7 +254,10 @@ def reset_password(
 
 
 def activate_invitation(db: Session, payload: ActivationRequest) -> User:
-    invitation = auth_repository.get_invitation_by_token(db, payload.token)
+    invitation = auth_repository.get_invitation_by_token(
+        db,
+        auth_service.hash_token(payload.token),
+    )
     if invitation is None or _utc(invitation.expires_at) <= datetime.now(timezone.utc):
         raise BadRequestError("Invitation is invalid or expired")
     user = user_repository.get_by_id(db, invitation.user_id)

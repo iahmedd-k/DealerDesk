@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState } from "react";
+import { ApiError, api } from "./api";
 
 export type User = {
   id: number;
@@ -13,101 +14,119 @@ export type User = {
 type AuthContextValue = {
   user: User | null;
   accessToken: string | null;
+  authReady: boolean;
   activeDealershipId: number;
   setActiveDealershipId: (id: number) => void;
-  aiCopilotOpen: boolean;
-  setAiCopilotOpen: (open: boolean) => void;
   setSession: (accessToken: string, refreshToken: string, user: User) => void;
   logout: () => Promise<void>;
-  switchRoleDemo: (role: User["role"]) => void;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const DEFAULT_DEMO_USER: User = {
-  id: 1,
-  name: "Marcus Vance (Admin)",
-  email: "marcus@apexmotors.com",
-  role: "dealership_admin",
-  dealership_id: 1,
-};
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(DEFAULT_DEMO_USER);
-  const [accessToken, setAccessToken] = useState<string | null>("demo-bearer-token");
-  const [activeDealershipId, setActiveDealershipId] = useState<number>(1);
-  const [aiCopilotOpen, setAiCopilotOpen] = useState<boolean>(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [activeDealershipId, setActiveDealershipId] = useState<number>(0);
 
   useEffect(() => {
-    try {
-      const storedToken = localStorage.getItem("dealerdesk_access");
-      const storedUser = localStorage.getItem("dealerdesk_user");
-      const storedDealership = localStorage.getItem("dealerdesk_active_dealership");
-      if (storedToken) setAccessToken(storedToken);
-      if (storedUser) setUser(JSON.parse(storedUser));
-      if (storedDealership) setActiveDealershipId(Number(storedDealership));
-    } catch {
-      // Keep default demo user
+    function handleAuthExpired() {
+      localStorage.removeItem("dealerdesk_access");
+      localStorage.removeItem("dealerdesk_refresh");
+      localStorage.removeItem("dealerdesk_user");
+      localStorage.removeItem("dealerdesk_active_dealership");
+      setAccessToken(null);
+      setUser(null);
+      setActiveDealershipId(0);
     }
+    window.addEventListener("dealerdesk:auth-expired", handleAuthExpired);
+    return () => window.removeEventListener("dealerdesk:auth-expired", handleAuthExpired);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function restoreSession() {
+      const storedToken = localStorage.getItem("dealerdesk_access");
+      const storedDealership = localStorage.getItem("dealerdesk_active_dealership");
+      if (!storedToken) {
+        setAuthReady(true);
+        return;
+      }
+
+      setAccessToken(storedToken);
+      try {
+        const restoredUser = await api<User>("/auth/me", {}, storedToken);
+        if (cancelled) return;
+        setUser(restoredUser);
+        const storedId = Number(storedDealership);
+        setActiveDealershipId(
+          restoredUser.dealership_id ??
+            (Number.isInteger(storedId) && storedId > 0 ? storedId : 0),
+        );
+      } catch (error) {
+        if (cancelled) return;
+        localStorage.removeItem("dealerdesk_access");
+        localStorage.removeItem("dealerdesk_refresh");
+        localStorage.removeItem("dealerdesk_user");
+        localStorage.removeItem("dealerdesk_active_dealership");
+        setAccessToken(null);
+        setUser(null);
+        if (!(error instanceof ApiError && error.statusCode === 401)) {
+          console.error("Could not restore the DealerDesk session.", error);
+        }
+      } finally {
+        if (!cancelled) setAuthReady(true);
+      }
+    }
+    restoreSession();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   function setSession(accessTokenValue: string, refreshToken: string, nextUser: User) {
-    try {
-      localStorage.setItem("dealerdesk_access", accessTokenValue);
-      localStorage.setItem("dealerdesk_refresh", refreshToken);
-      localStorage.setItem("dealerdesk_user", JSON.stringify(nextUser));
-      if (nextUser.dealership_id) {
-        localStorage.setItem("dealerdesk_active_dealership", String(nextUser.dealership_id));
-        setActiveDealershipId(nextUser.dealership_id);
-      }
-    } catch {}
+    localStorage.setItem("dealerdesk_access", accessTokenValue);
+    localStorage.setItem("dealerdesk_refresh", refreshToken);
+    if (nextUser.dealership_id) {
+      localStorage.setItem("dealerdesk_active_dealership", String(nextUser.dealership_id));
+      setActiveDealershipId(nextUser.dealership_id);
+    } else {
+      localStorage.removeItem("dealerdesk_active_dealership");
+      setActiveDealershipId(0);
+    }
     setAccessToken(accessTokenValue);
     setUser(nextUser);
+    setAuthReady(true);
   }
 
   function handleSetActiveDealershipId(id: number) {
-    setActiveDealershipId(id);
-    try {
-      localStorage.setItem("dealerdesk_active_dealership", String(id));
-    } catch {}
-  }
-
-  function switchRoleDemo(role: User["role"]) {
-    let nextUser: User;
-    if (role === "dealership_admin") {
-      nextUser = { id: 1, name: "Marcus Vance", email: "marcus@apexmotors.com", role, dealership_id: 1 };
-    } else if (role === "manager") {
-      nextUser = { id: 2, name: "Sarah Jenkins", email: "sarah.j@apexmotors.com", role, dealership_id: 1 };
-    } else if (role === "sales_rep") {
-      nextUser = { id: 3, name: "Carlos Reyes", email: "carlos.r@apexmotors.com", role, dealership_id: 1 };
-    } else if (role === "dealerdesk_admin") {
-      nextUser = { id: 99, name: "DealerDesk Admin", email: "dealerdesk@demo.com", role, dealership_id: null };
-    } else {
-      nextUser = { id: 501, name: "Sophia Martinez", email: "customer@demo.com", role: "customer", dealership_id: null };
+    if (!Number.isInteger(id) || id < 1) {
+      throw new Error("A valid dealership must be selected.");
     }
-    setUser(nextUser);
-    try {
-      localStorage.setItem("dealerdesk_user", JSON.stringify(nextUser));
-    } catch {}
+    setActiveDealershipId(id);
+    localStorage.setItem("dealerdesk_active_dealership", String(id));
   }
 
   async function logout() {
     if (accessToken) {
-      await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1"}/auth/logout`,
-        {
+      try {
+        await api<void>(
+          "/auth/logout",
+          {
           method: "POST",
-          headers: { Authorization: `Bearer ${accessToken}` },
-        }
-      ).catch(() => undefined);
+          },
+          accessToken,
+        );
+      } catch (error) {
+        console.error("The server could not revoke the current session.", error);
+      }
     }
-    try {
-      localStorage.removeItem("dealerdesk_access");
-      localStorage.removeItem("dealerdesk_refresh");
-      localStorage.removeItem("dealerdesk_user");
-    } catch {}
+    localStorage.removeItem("dealerdesk_access");
+    localStorage.removeItem("dealerdesk_refresh");
+    localStorage.removeItem("dealerdesk_user");
     setAccessToken(null);
     setUser(null);
+    setActiveDealershipId(0);
   }
 
   return (
@@ -115,13 +134,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       value={{
         user,
         accessToken,
+        authReady,
         activeDealershipId,
         setActiveDealershipId: handleSetActiveDealershipId,
-        aiCopilotOpen,
-        setAiCopilotOpen,
         setSession,
         logout,
-        switchRoleDemo,
       }}
     >
       {children}

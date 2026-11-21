@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   LayoutDashboard,
   Car,
@@ -12,14 +13,11 @@ import {
   ShieldAlert,
   Building2,
   LogOut,
-  Search,
-  Activity,
-  ChevronDown,
-  UserCheck,
+  Layers,
 } from "lucide-react";
-import { useAuth, User } from "../providers";
-import { MOCK_DEALERSHIPS } from "../lib/mockData";
-import AiCopilotDrawer from "./AiCopilotDrawer";
+import { ApiError, api } from "../api";
+import { useAuth } from "../providers";
+import type { Dealership } from "../lib/types";
 
 interface ShellProps {
   children: React.ReactNode;
@@ -31,44 +29,126 @@ export default function Shell({ children }: ShellProps) {
     logout,
     activeDealershipId,
     setActiveDealershipId,
-    setAiCopilotOpen,
-    switchRoleDemo,
+    authReady,
   } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
+  const [dealershipName, setDealershipName] = useState("");
+  const [publicDealerships, setPublicDealerships] = useState<Dealership[]>([]);
+
+  useEffect(() => {
+    if (user?.role !== "customer") return;
+    let cancelled = false;
+    api<Dealership[]>("/dealerships/public")
+      .then((items) => {
+        if (cancelled) return;
+        setPublicDealerships(items);
+        const selected = items.find((item) => item.id === activeDealershipId);
+        setDealershipName(selected?.name ?? "");
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) console.error("Could not load available dealerships.", error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDealershipId, user?.role]);
 
   async function handleLogout() {
     await logout();
     router.push("/login");
   }
 
-  const currentDealership =
-    MOCK_DEALERSHIPS.find((d) => d.id === activeDealershipId) || MOCK_DEALERSHIPS[0];
+  useEffect(() => {
+    if (user?.role === "customer") return;
+    if (!activeDealershipId) {
+      setDealershipName("");
+      return;
+    }
 
-  const navSections = [
-    {
-      title: "Operations",
-      links: [
-        { href: "/", label: "Dashboard", icon: LayoutDashboard },
-        { href: "/inventory", label: "Vehicle Inventory", icon: Car },
-        { href: "/bookings", label: "Test Drives & CRM", icon: Calendar },
-      ],
-    },
-    {
-      title: "Intelligence",
-      links: [
-        { href: "/assistant", label: "AI Copilot Workspace", icon: Sparkles },
-        { href: "/knowledge", label: "Knowledge Center (RAG)", icon: BookOpen },
-      ],
-    },
-    {
-      title: "Governance",
-      links: [
-        { href: "/staff", label: "Team & Staff", icon: Users },
-        { href: "/audit", label: "Security & Audit Logs", icon: ShieldAlert },
-      ],
-    },
-  ];
+    let cancelled = false;
+    api<{ name: string }>(`/dealerships/${activeDealershipId}`)
+      .then((dealership) => {
+        if (!cancelled) setDealershipName(dealership.name);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled && !(error instanceof ApiError && error.statusCode === 401)) {
+          console.error("Could not load the active dealership.", error);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDealershipId, user?.role]);
+
+  useEffect(() => {
+    if (authReady && !user) router.replace("/login");
+  }, [authReady, router, user]);
+
+  if (!authReady || !user) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-300">
+        {authReady ? "Redirecting to sign in..." : "Restoring your session..."}
+      </main>
+    );
+  }
+
+  const navSections =
+    user.role === "customer"
+      ? [
+          {
+            title: "Customer",
+            links: [
+              { href: "/inventory", label: "Browse Vehicles", icon: Car },
+              { href: "/bookings", label: "My Test Drives", icon: Calendar },
+              { href: "/assistant", label: "AI Assistant", icon: Sparkles },
+            ],
+          },
+        ]
+      : user.role === "dealerdesk_admin"
+      ? [
+          {
+            title: "SaaS Platform Management",
+            links: [
+              { href: "/dealerships", label: "SaaS Control Tower", icon: Building2 },
+              { href: "/audit", label: "Platform Audit Trail", icon: ShieldAlert },
+              { href: "/assistant", label: "AI Copilot Workspace", icon: Sparkles },
+            ],
+          },
+        ]
+      : [
+          {
+            title: "Operations",
+            links: [
+              { href: "/", label: "Executive Dashboard", icon: LayoutDashboard },
+              { href: "/inventory", label: "Vehicle Inventory", icon: Car },
+              { href: "/bookings", label: "Test Drives & CRM", icon: Calendar },
+              { href: "/leads", label: "Customer Leads", icon: Users },
+              ...(["dealership_admin", "manager"].includes(user.role)
+                ? [{ href: "/brands", label: "Multi-Brand Portfolio", icon: Layers }]
+                : []),
+            ],
+          },
+          {
+            title: "Intelligence",
+            links: [
+              { href: "/assistant", label: "AI Copilot Workspace", icon: Sparkles },
+              { href: "/knowledge", label: "Knowledge Center (RAG)", icon: BookOpen },
+            ],
+          },
+          ...(["dealership_admin", "manager"].includes(user.role)
+            ? [
+                {
+                  title: "Governance",
+                  links: [
+                    { href: "/staff", label: "Team & Staff", icon: Users },
+                    { href: "/audit", label: "Security & Audit Logs", icon: ShieldAlert },
+                  ],
+                },
+              ]
+            : []),
+        ];
 
   return (
     <div className="erp-container">
@@ -84,33 +164,53 @@ export default function Shell({ children }: ShellProps) {
               <div className="flex items-center gap-1.5">
                 <span className="font-bold text-base tracking-tight text-white">DealerDesk</span>
                 <span className="rounded bg-blue-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-blue-400">
-                  ERP
+                  CRM
                 </span>
               </div>
               <p className="text-[11px] text-slate-400">Automotive Operations Platform</p>
             </div>
           </Link>
 
-          {/* Dealership Switcher */}
-          <div className="mt-4">
-            <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1 block">
-              Active Dealership Workspace
-            </label>
-            <div className="relative">
+          {/* Active dealership context */}
+          {user?.role === "dealerdesk_admin" ? (
+            <div className="mt-4 rounded-lg bg-indigo-950/40 border border-indigo-500/30 p-2.5">
+              <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-indigo-400 mb-1">
+                <Building2 className="h-3.5 w-3.5" />
+                SaaS Scope
+              </div>
+              <p className="text-xs font-semibold text-slate-200">Cross-Tenant Platform</p>
+              <p className="text-[10px] text-slate-400 mt-0.5">Monitoring all registered dealerships</p>
+            </div>
+          ) : user.role === "customer" ? (
+            <div className="mt-4">
+              <label htmlFor="customer-dealership" className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1 block">
+                Choose a dealership
+              </label>
               <select
-                value={activeDealershipId}
-                onChange={(e) => setActiveDealershipId(Number(e.target.value))}
-                className="w-full appearance-none rounded-lg bg-slate-800/80 border border-slate-700/80 px-2.5 py-2 text-xs font-medium text-slate-200 outline-none hover:border-slate-600 focus:border-blue-500"
+                id="customer-dealership"
+                value={activeDealershipId || ""}
+                onChange={(event) => {
+                  const dealershipId = Number(event.target.value);
+                  if (dealershipId) setActiveDealershipId(dealershipId);
+                }}
+                className="w-full truncate rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-2 text-xs font-medium text-slate-200"
               >
-                {MOCK_DEALERSHIPS.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
+                <option value="" disabled>Select dealership</option>
+                {publicDealerships.map((dealership) => (
+                  <option key={dealership.id} value={dealership.id}>{dealership.name}</option>
                 ))}
               </select>
-              <ChevronDown className="pointer-events-none absolute right-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
             </div>
-          </div>
+          ) : (
+            <div className="mt-4">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1 block">
+                Dealership Workspace
+              </span>
+              <p className="truncate rounded-lg bg-slate-800/80 border border-slate-700/80 px-2.5 py-2 text-xs font-medium text-slate-200">
+                {dealershipName || "Loading dealership..."}
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Navigation Groups */}
@@ -144,75 +244,15 @@ export default function Shell({ children }: ShellProps) {
           ))}
         </div>
 
-        {/* Demo Role Switcher */}
-        <div className="px-3 py-3 border-t border-slate-800/80 bg-slate-900/50">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
-              <UserCheck className="h-3 w-3 text-blue-400" />
-              Role Perspective
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-1 text-[11px]">
-            <button
-              onClick={() => switchRoleDemo("dealership_admin")}
-              className={`rounded px-1.5 py-1 font-medium transition-colors ${
-                user?.role === "dealership_admin"
-                  ? "bg-blue-600 text-white"
-                  : "bg-slate-800 text-slate-300 hover:bg-slate-700"
-              }`}
-            >
-              Admin
-            </button>
-            <button
-              onClick={() => switchRoleDemo("manager")}
-              className={`rounded px-1.5 py-1 font-medium transition-colors ${
-                user?.role === "manager"
-                  ? "bg-blue-600 text-white"
-                  : "bg-slate-800 text-slate-300 hover:bg-slate-700"
-              }`}
-            >
-              Manager
-            </button>
-            <button
-              onClick={() => switchRoleDemo("sales_rep")}
-              className={`rounded px-1.5 py-1 font-medium transition-colors ${
-                user?.role === "sales_rep"
-                  ? "bg-blue-600 text-white"
-                  : "bg-slate-800 text-slate-300 hover:bg-slate-700"
-              }`}
-            >
-              Sales Rep
-            </button>
-            <button
-              onClick={() => switchRoleDemo("customer")}
-              className={`rounded px-1.5 py-1 font-medium transition-colors ${
-                user?.role === "customer"
-                  ? "bg-blue-600 text-white"
-                  : "bg-slate-800 text-slate-300 hover:bg-slate-700"
-              }`}
-            >
-              Customer
-            </button>
-          </div>
-        </div>
-
         {/* User Footer Profile & Health Status */}
         <div className="p-3 border-t border-slate-800 bg-slate-950">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-1.5 text-[11px] text-emerald-400">
-              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>DB Ping: 12ms</span>
-            </div>
-            <span className="text-[10px] text-slate-400 uppercase font-mono">v0.1.0-erp</span>
-          </div>
-
           <div className="flex items-center justify-between pt-1">
             <div className="flex items-center gap-2 min-w-0">
               <div className="h-8 w-8 rounded-full bg-slate-800 flex items-center justify-center font-bold text-xs text-blue-400 border border-slate-700">
                 {user?.name?.slice(0, 2).toUpperCase() || "DD"}
               </div>
               <div className="min-w-0">
-                <p className="text-xs font-bold text-white truncate">{user?.name || "Marcus Vance"}</p>
+                <p className="text-xs font-bold text-white truncate">{user.name}</p>
                 <p className="text-[10px] text-slate-400 truncate capitalize">
                   {user?.role?.replaceAll("_", " ") || "Administrator"}
                 </p>
@@ -234,29 +274,35 @@ export default function Shell({ children }: ShellProps) {
         {/* Top Header Bar */}
         <header className="erp-header">
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 text-xs text-slate-400">
-              <Building2 className="h-4 w-4 text-blue-400" />
-              <span className="font-semibold text-slate-200">{currentDealership.name}</span>
-              <span>/</span>
-              <span className="capitalize">{pathname === "/" ? "Executive Dashboard" : pathname.slice(1)}</span>
-            </div>
+            {user?.role === "dealerdesk_admin" ? (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="flex items-center gap-1.5 rounded-full bg-indigo-500/20 px-2.5 py-0.5 text-[11px] font-bold text-indigo-300 border border-indigo-500/30">
+                  👑 DealerDesk SaaS SuperAdmin
+                </span>
+                <span className="text-slate-500">/</span>
+                <span className="text-slate-300 font-medium capitalize">
+                  {pathname === "/dealerships" ? "SaaS Control Tower" : pathname.replace("/", "")}
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <Building2 className="h-4 w-4 text-blue-400" />
+                <span className="font-semibold text-slate-200">{dealershipName || "Dealership"}</span>
+                <span className="text-slate-500">/</span>
+                <span className="capitalize">{pathname === "/" ? "Executive Dashboard" : pathname.slice(1)}</span>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-3">
             {/* Quick Copilot Launcher in Topbar */}
-            <button
-              onClick={() => setAiCopilotOpen(true)}
+            <Link
+              href="/assistant"
               className="flex items-center gap-2 rounded-lg bg-blue-600/10 border border-blue-500/30 px-3 py-1.5 text-xs font-semibold text-blue-400 hover:bg-blue-600 hover:text-white transition-all shadow-sm"
             >
               <Sparkles className="h-3.5 w-3.5" />
               <span>Ask AI Copilot</span>
-            </button>
-
-            {/* Status indicator */}
-            <div className="hidden sm:flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400 border border-emerald-500/20">
-              <Activity className="h-3 w-3" />
-              <span>All Services Operational</span>
-            </div>
+            </Link>
           </div>
         </header>
 
@@ -264,8 +310,6 @@ export default function Shell({ children }: ShellProps) {
         <main className="erp-content">{children}</main>
       </div>
 
-      {/* Embedded Global Copilot Drawer */}
-      <AiCopilotDrawer />
     </div>
   );
 }

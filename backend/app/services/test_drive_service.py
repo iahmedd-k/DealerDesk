@@ -143,13 +143,28 @@ def list_slots(
     available_only: bool = False,
     include_inactive: bool = False,
 ) -> list[TestDriveSlot]:
-    dealership_service.get_active_dealership(db, dealership_id)
+    if start_date is not None and end_date is not None and end_date < start_date:
+        raise UnprocessableEntityError("End date must be on or after start date")
+    dealership = dealership_service.get_active_dealership(db, dealership_id)
+    zone = ZoneInfo(dealership.timezone)
+    start_at = (
+        datetime.combine(start_date, time.min, tzinfo=zone).astimezone(timezone.utc)
+        if start_date is not None
+        else None
+    )
+    end_at = (
+        datetime.combine(end_date + timedelta(days=1), time.min, tzinfo=zone).astimezone(
+            timezone.utc
+        )
+        if end_date is not None
+        else None
+    )
     return test_drive_repository.list_slots(
         db,
         dealership_id,
         vehicle_id=vehicle_id,
-        start_date=start_date,
-        end_date=end_date,
+        start_at=start_at,
+        end_at=end_at,
         available_only=available_only,
         include_inactive=include_inactive,
     )
@@ -302,6 +317,7 @@ def book_slot(
         or brand.is_deleted
     ):
         raise ConflictError("Vehicle is unavailable for test drives")
+    test_drive_repository.lock_customer(db, current_user.id)
     if test_drive_repository.has_booking(db, slot.id, current_user.id):
         raise ConflictError("Customer already booked this slot")
     if test_drive_repository.has_overlapping_booking(
@@ -385,6 +401,7 @@ def reschedule_booking(
     ):
         raise ConflictError("Target vehicle is unavailable for test drives")
 
+    test_drive_repository.lock_customer(db, booking.customer_id)
     if test_drive_repository.has_booking(db, new_slot.id, booking.customer_id):
         raise ConflictError("Customer already booked the target slot")
     if test_drive_repository.has_overlapping_booking(

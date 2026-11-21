@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from alembic import command
 from alembic.config import Config
@@ -26,6 +25,40 @@ def run_alembic_downgrade(revision: str = "-1") -> None:
 def stamp_alembic_revision(revision: str = "head") -> None:
     alembic_cfg = get_alembic_config()
     command.stamp(alembic_cfg, revision)
+
+
+def ensure_dealership_subscription_columns(engine: Engine) -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "ALTER TABLE dealerships ADD COLUMN IF NOT EXISTS subscription_plan VARCHAR(32) DEFAULT 'pro'"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE dealerships ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(32) DEFAULT 'active'"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE dealerships ADD COLUMN IF NOT EXISTS monthly_price NUMERIC(10, 2) DEFAULT 499.00"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE dealerships ADD COLUMN IF NOT EXISTS max_brands INTEGER DEFAULT 10"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE dealerships ADD COLUMN IF NOT EXISTS max_vehicles INTEGER DEFAULT 250"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE dealerships ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()"
+            )
+        )
 
 
 def ensure_vehicle_brand_associations(engine: Engine) -> None:

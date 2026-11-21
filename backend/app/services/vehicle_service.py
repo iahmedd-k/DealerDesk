@@ -13,7 +13,7 @@ from app.core.errors import (
 from app.core.roles import DEALERSHIP_MANAGEMENT_ROLES
 from app.models.user import User
 from app.models.workspace import Brand, Vehicle
-from app.repositories import vehicle_repository
+from app.repositories import brand_repository, vehicle_repository
 from app.schemas.workspace import VehicleCreateRequest, VehicleUpdateRequest
 from app.services import dealership_service
 
@@ -25,6 +25,15 @@ def create_vehicle(
     payload: VehicleCreateRequest,
 ) -> Vehicle:
     ensure_dealership_access(current_user, dealership_id)
+    dealership = brand_repository.lock_active_dealership(db, dealership_id)
+    if dealership is None:
+        raise NotFoundError("Dealership not found")
+    if vehicle_repository.count_for_dealership(
+        db,
+        dealership_id,
+        include_archived_brands=True,
+    ) >= dealership.max_vehicles:
+        raise ConflictError("This dealership has reached its vehicle limit")
     brand = _get_active_brand(db, dealership_id, payload.brand_id)
     vehicle = Vehicle(
         dealership_id=dealership_id,
@@ -156,6 +165,8 @@ def update_vehicle(
     ensure_dealership_access(current_user, dealership_id)
     vehicle = _get_vehicle(db, dealership_id, vehicle_id)
     updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        raise UnprocessableEntityError("At least one vehicle field is required")
     if "brand_id" in updates:
         if updates["brand_id"] is None:
             raise UnprocessableEntityError("brand_id cannot be null")
@@ -163,8 +174,9 @@ def update_vehicle(
         vehicle.brand_id = brand.id
         vehicle.make = brand.name
     for field, value in updates.items():
-        if value is not None:
-            setattr(vehicle, field, value)
+        if value is None and field not in {"variant", "description"}:
+            raise UnprocessableEntityError(f"{field} cannot be null")
+        setattr(vehicle, field, value)
     if updates.get("is_available") is True or updates.get("test_drive_enabled") is True:
         _ensure_brand_active(db, vehicle.brand_id)
     try:

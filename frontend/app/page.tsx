@@ -22,46 +22,64 @@ import Shell from "./components/Shell";
 import { useAuth } from "./providers";
 import { api } from "./api";
 import {
-  MOCK_VEHICLES,
-  MOCK_BOOKINGS,
-  MOCK_TEST_DRIVE_SLOTS,
-  MOCK_AUDIT_LOGS,
-  MOCK_HEALTH,
   Vehicle,
   TestDriveBooking,
   TestDriveSlot,
   AuditLogItem,
   HealthStatus,
-} from "./lib/mockData";
+  KnowledgeDocument,
+} from "./lib/types";
 
 export default function DashboardPage() {
-  const { user, activeDealershipId, setAiCopilotOpen } = useAuth();
-  const [vehicles, setVehicles] = useState<Vehicle[]>(MOCK_VEHICLES);
-  const [bookings, setBookings] = useState<TestDriveBooking[]>(MOCK_BOOKINGS);
-  const [slots, setSlots] = useState<TestDriveSlot[]>(MOCK_TEST_DRIVE_SLOTS);
-  const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>(MOCK_AUDIT_LOGS);
-  const [health, setHealth] = useState<HealthStatus>(MOCK_HEALTH);
-  const [loading, setLoading] = useState(false);
+  const { user, activeDealershipId } = useAuth();
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [bookings, setBookings] = useState<TestDriveBooking[]>([]);
+  const [slots, setSlots] = useState<TestDriveSlot[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
+  const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
+  const [health, setHealth] = useState<HealthStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
-    // Attempt live fetch if available
-    api<Vehicle[]>(`/dealerships/${activeDealershipId}/vehicles`)
-      .then((data) => {
-        if (Array.isArray(data) && data.length) setVehicles(data);
-      })
-      .catch(() => {});
+    if (!activeDealershipId) {
+      setLoading(false);
+      setLoadError("Select a dealership workspace to view its dashboard.");
+      return;
+    }
 
-    api<TestDriveSlot[]>(`/dealerships/${activeDealershipId}/test-drive-slots`)
-      .then((data) => {
-        if (Array.isArray(data) && data.length) setSlots(data);
+    let cancelled = false;
+    setLoading(true);
+    setLoadError("");
+    Promise.all([
+      api<Vehicle[]>(`/dealerships/${activeDealershipId}/vehicles`),
+      api<TestDriveSlot[]>(`/dealerships/${activeDealershipId}/test-drive-slots`),
+      api<TestDriveBooking[]>(`/dealerships/${activeDealershipId}/test-drive-bookings`),
+      api<{ items: AuditLogItem[] }>(`/dealerships/${activeDealershipId}/audit-logs`),
+      api<KnowledgeDocument[]>(`/dealerships/${activeDealershipId}/knowledge/documents`),
+      api<HealthStatus>("/health"),
+    ])
+      .then(([nextVehicles, nextSlots, nextBookings, nextAudit, nextDocuments, nextHealth]) => {
+        if (cancelled) return;
+        setVehicles(nextVehicles);
+        setSlots(nextSlots);
+        setBookings(nextBookings);
+        setAuditLogs(nextAudit.items);
+        setDocuments(nextDocuments);
+        setHealth(nextHealth);
       })
-      .catch(() => {});
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setLoadError(error instanceof Error ? error.message : "Could not load dashboard data.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
 
-    api<HealthStatus>("/health")
-      .then((data) => {
-        if (data && data.status) setHealth(data);
-      })
-      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, [activeDealershipId]);
 
   // Calculations
@@ -84,9 +102,16 @@ export default function DashboardPage() {
             Welcome back, {user?.name || "Marcus"}
           </h1>
           <p className="text-xs text-slate-400 mt-1">
-            Viewing operations for <strong className="text-slate-300">Apex Motors NYC</strong> • Real-time inventory & CRM dispatcher
+          Viewing operations for <strong className="text-slate-300">{user?.dealership_id ? "your dealership" : "selected dealership"}</strong>
           </p>
         </div>
+
+        {loadError && (
+          <div role="alert" className="mb-5 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">
+            {loadError}
+          </div>
+        )}
+        {loading && <p className="mb-5 text-xs text-slate-400">Loading dashboard data...</p>}
 
         <div className="flex flex-wrap items-center gap-2.5">
           <Link
@@ -103,13 +128,13 @@ export default function DashboardPage() {
             <Calendar className="h-3.5 w-3.5" />
             <span>Test-Drive Schedule</span>
           </Link>
-          <button
-            onClick={() => setAiCopilotOpen(true)}
+          <Link
+            href="/assistant"
             className="rounded-lg bg-indigo-600/20 border border-indigo-500/40 px-3.5 py-2 text-xs font-semibold text-indigo-300 hover:bg-indigo-600 hover:text-white transition-all flex items-center gap-2 shadow-sm"
           >
             <Sparkles className="h-3.5 w-3.5" />
             <span>Ask AI Assistant</span>
-          </button>
+          </Link>
         </div>
       </div>
 
@@ -147,7 +172,6 @@ export default function DashboardPage() {
           </div>
           <div className="flex items-center gap-1.5 text-xs text-slate-400 mt-2">
             <span className="badge badge-info">{activeBookingsCount} Active Scheduled</span>
-            <span>• 100% Verified</span>
           </div>
         </div>
 
@@ -160,11 +184,10 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="text-2xl font-black text-white">
-            3 Docs / 28 Chunks
+            {documents.length} Documents
           </div>
           <div className="flex items-center gap-1.5 text-xs text-slate-400 mt-2">
-            <span className="badge badge-success">Embedding Ready</span>
-            <span>• text-embedding-3</span>
+            <span className="badge badge-neutral">{health?.services.embeddings ?? "Unknown"}</span>
           </div>
         </div>
 
@@ -177,11 +200,12 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="text-2xl font-black text-white">
-            {health.db_latency_ms} ms Ping
+            {health?.database.latency_ms == null ? "Unavailable" : `${health.database.latency_ms} ms`}
           </div>
           <div className="flex items-center gap-1.5 text-xs text-slate-400 mt-2">
-            <span className="badge badge-success">All Probes Green</span>
-            <span>• Idempotency Active</span>
+            <span className={`badge ${health?.status === "healthy" ? "badge-success" : "badge-danger"}`}>
+              {health?.status ?? "Health unavailable"}
+            </span>
           </div>
         </div>
       </div>
@@ -377,25 +401,26 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-400">PostgreSQL Connection:</span>
               <span className="text-emerald-400 font-mono font-semibold flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3" /> Connected ({health.db_latency_ms}ms)
+                {health?.database.status ?? "Unknown"}
+                {health?.database.latency_ms == null ? "" : ` (${health.database.latency_ms}ms)`}
               </span>
             </div>
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-400">Supabase Media Storage:</span>
               <span className="text-emerald-400 font-mono font-semibold flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3" /> Ready (brand-logos & vehicle-images)
+                {health?.services.storage ?? "Unknown"}
               </span>
             </div>
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-400">Resend Email Gateway:</span>
               <span className="text-emerald-400 font-mono font-semibold flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3" /> Active (Transactional)
+                {health?.services.email ?? "Unknown"}
               </span>
             </div>
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-400">RAG Semantic Embeddings & LLM:</span>
               <span className="text-emerald-400 font-mono font-semibold flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3" /> Ready (OpenAI-compatible / Heuristic synthesis)
+                Embeddings: {health?.services.embeddings ?? "Unknown"}; LLM: {health?.services.llm ?? "Unknown"}
               </span>
             </div>
           </div>

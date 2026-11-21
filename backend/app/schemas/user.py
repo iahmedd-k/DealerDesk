@@ -7,6 +7,7 @@ class UserResponse(BaseModel):
     email: EmailStr = Field(description="User's email address.")
     role: str = Field(description="User's application role.")
     dealership_id: int | None = Field(default=None)
+    is_active: bool = Field(default=True)
     must_change_password: bool = Field(default=False)
 
     model_config = ConfigDict(from_attributes=True)

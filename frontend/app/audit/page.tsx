@@ -15,22 +15,40 @@ import {
 import Shell from "../components/Shell";
 import { useAuth } from "../providers";
 import { api } from "../api";
-import { MOCK_AUDIT_LOGS, AuditLogItem } from "../lib/mockData";
+import type { AuditLogItem } from "../lib/types";
 
 export default function AuditPage() {
   const { activeDealershipId } = useAuth();
-  const [logs, setLogs] = useState<AuditLogItem[]>(MOCK_AUDIT_LOGS);
+  const [logs, setLogs] = useState<AuditLogItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [filterAction, setFilterAction] = useState<string>("all");
   const [selectedLog, setSelectedLog] = useState<AuditLogItem | null>(null);
 
   useEffect(() => {
+    if (!activeDealershipId) {
+      setLoading(false);
+      setError("Select a dealership workspace to view audit events.");
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setError("");
     api<{ items: AuditLogItem[] }>(`/dealerships/${activeDealershipId}/audit-logs`)
       .then((data) => {
-        if (data && Array.isArray(data.items) && data.items.length) {
-          setLogs(data.items);
-        }
+        if (!cancelled) setLogs(data.items);
       })
-      .catch(() => {});
+      .catch((cause: unknown) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : "Could not load audit events.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [activeDealershipId]);
 
   const filteredLogs = logs.filter((log) => {
@@ -55,6 +73,9 @@ export default function AuditPage() {
             Immutable audit trails capturing actor, IP, timestamp, action, and JSON event metadata
           </p>
         </div>
+
+        {error && <div role="alert" className="mb-4 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">{error}</div>}
+        {loading && <p className="mb-4 text-xs text-slate-400">Loading audit events...</p>}
 
         <div className="flex items-center gap-2 text-xs">
           <span className="text-slate-400">Filter Action:</span>
@@ -129,6 +150,9 @@ export default function AuditPage() {
                 </td>
               </tr>
             ))}
+            {!loading && filteredLogs.length === 0 && (
+              <tr><td colSpan={6} className="py-8 text-center text-sm text-slate-400">No audit events match the current filter.</td></tr>
+            )}
           </tbody>
         </table>
         {!filteredLogs.length && (

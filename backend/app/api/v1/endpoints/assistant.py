@@ -1,6 +1,9 @@
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
+from app.core.limiter import limiter
 from app.db.session import get_db
 from app.dependencies.auth import get_optional_current_user
 from app.models.user import User
@@ -13,6 +16,54 @@ router = APIRouter(
 )
 
 
+@limiter.limit(get_settings().assistant_rate_limit)
+@router.post(
+    "/chat/stream",
+    summary="Stream Chat with Dealership AI Assistant",
+    description=(
+        "Streams token-by-token response over Server-Sent Events (SSE) "
+        "with active prompt injection and PII safety guardrails."
+    ),
+)
+async def stream_chat_with_dealership_assistant(
+    dealership_id: int,
+    payload: AssistantChatRequest,
+    request: Request,
+    current_user: User | None = Depends(get_optional_current_user),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    assistant_service.validate_assistant_scope(db, dealership_id, current_user)
+    client_ip = request.client.host if request.client else None
+    audit_service.log_event(
+        db,
+        action="assistant.chat_stream",
+        resource_type="dealership",
+        resource_id=str(dealership_id),
+        dealership_id=dealership_id,
+        actor=current_user,
+        ip_address=client_ip,
+        details={"channel": payload.channel},
+    )
+
+    generator = assistant_service.stream_chat_with_assistant(
+        db,
+        dealership_id,
+        payload,
+        current_user=current_user,
+    )
+
+    return StreamingResponse(
+        generator,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@limiter.limit(get_settings().assistant_rate_limit)
 @router.post(
     "/chat",
     response_model=AssistantChatResponse,

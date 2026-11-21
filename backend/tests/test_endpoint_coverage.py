@@ -48,6 +48,16 @@ def test_every_api_route_has_a_workflow(client, db, seeded_users, monkeypatch) -
     customer_headers = {"Authorization": f"Bearer {customer_token}"}
     dealerdesk_headers = {"Authorization": f"Bearer {dealerdesk_login['access_token']}"}
     dealership_id = seeded_users[1].dealership_id
+    invitation_tokens: list[str] = []
+
+    def send_invitation(**kwargs: str) -> str:
+        invitation_tokens.append(kwargs["activation_token"])
+        return "email_sent"
+
+    monkeypatch.setattr(
+        "app.services.staff_service.send_staff_invitation",
+        send_invitation,
+    )
 
     signup = client.post(
         "/api/v1/auth/signup",
@@ -117,11 +127,11 @@ def test_every_api_route_has_a_workflow(client, db, seeded_users, monkeypatch) -
         )
     )
     assert reset_token is not None
-    assert reset_token.token == reset_email["token"]
+    assert reset_token.token != reset_email["token"]
     assert (
         client.post(
             "/api/v1/auth/reset-password",
-            json={"token": reset_token.token, "new_password": "ResetRoute!1"},
+            json={"token": reset_email["token"], "new_password": "ResetRoute!1"},
         ).status_code
         == 200
     )
@@ -294,9 +304,7 @@ def test_every_api_route_has_a_workflow(client, db, seeded_users, monkeypatch) -
         ).status_code
         == 204
     )
-    old_activation_token = db.get(
-        StaffInvitation, invitation.json()["id"]
-    ).activation_token
+    old_activation_token = invitation_tokens[-1]
     reinvited = client.post(
         f"/api/v1/dealerships/{dealership_id}/staff/invite",
         headers=admin_headers,
@@ -310,7 +318,7 @@ def test_every_api_route_has_a_workflow(client, db, seeded_users, monkeypatch) -
     assert reinvited.json()["id"] == invitation.json()["id"]
     activation_record = db.get(StaffInvitation, reinvited.json()["id"])
     assert activation_record is not None
-    assert activation_record.activation_token != old_activation_token
+    assert activation_record.activation_token != invitation_tokens[-1]
     assert (
         client.post(
             "/api/v1/auth/activate-invitation",
@@ -334,7 +342,7 @@ def test_every_api_route_has_a_workflow(client, db, seeded_users, monkeypatch) -
         client.post(
             "/api/v1/auth/activate-invitation",
             json={
-                "token": activation_record.activation_token,
+                "token": invitation_tokens[-1],
                 "password": "Activated!1",
             },
         ).status_code

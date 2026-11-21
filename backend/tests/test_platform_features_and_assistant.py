@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -6,15 +6,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.main import app
-from app.models.user import User
 from app.schemas.assistant import AssistantChatRequest
-from app.services import assistant_service
-from seed.demo_credentials import (
-    CUSTOMER_DEMO_EMAIL,
-    CUSTOMER_DEMO_PASSWORD,
-    DEALERSHIP_DEMO_EMAIL,
-    DEALERSHIP_DEMO_PASSWORD,
-)
+from app.services import assistant_service, test_drive_service
 
 pytestmark = pytest.mark.no_db
 
@@ -96,6 +89,13 @@ def test_idempotency_middleware_replay() -> None:
         assert res2.headers.get("Idempotent-Replayed") == "true"
         assert res2.json() == res1.json()
         assert mock_login.call_count == 1  # Not invoked again!
+        reused_key = client.post(
+            "/api/v1/auth/login",
+            headers={"Idempotency-Key": key},
+            json={"email": "other@example.com", "password": "OtherPassword!123"},
+        )
+        assert reused_key.status_code == 409
+        assert mock_login.call_count == 1
 
 
 def test_structured_error_envelope() -> None:
@@ -159,6 +159,33 @@ def test_dealership_ai_assistant_grounded_response_mock() -> None:
         assert "test drive" in res_td.response.lower()
 
 
+def test_slot_date_filters_use_dealership_timezone() -> None:
+    mock_dealership = MagicMock()
+    mock_dealership.timezone = "America/Los_Angeles"
+    test_date = date(2026, 1, 15)
+
+    with patch(
+        "app.services.dealership_service.get_active_dealership",
+        return_value=mock_dealership,
+    ), patch(
+        "app.repositories.test_drive_repository.list_slots",
+        return_value=[],
+    ) as list_slots:
+        test_drive_service.list_slots(
+            MagicMock(),
+            1,
+            start_date=test_date,
+            end_date=test_date,
+        )
+
+    assert list_slots.call_args.kwargs["start_at"] == datetime(
+        2026, 1, 15, 8, tzinfo=timezone.utc
+    )
+    assert list_slots.call_args.kwargs["end_at"] == datetime(
+        2026, 1, 16, 8, tzinfo=timezone.utc
+    )
+
+
 def test_vehicle_collection_filtering_sorting_and_pagination() -> None:
     client = TestClient(app)
     mock_vehicle = MagicMock()
@@ -177,7 +204,7 @@ def test_vehicle_collection_filtering_sorting_and_pagination() -> None:
     mock_vehicle.images = []
 
     with patch("app.services.vehicle_service.list_public_vehicles", return_value=[mock_vehicle]) as mock_list, \
-         patch("app.services.vehicle_service.count_vehicles", return_value=15) as mock_count:
+         patch("app.services.vehicle_service.count_vehicles", return_value=15):
         res = client.get(
             "/api/v1/dealerships/1/vehicles/public?page=2&page_size=5&min_price=20000&sort_by=price&order=desc&search=Camry"
         )

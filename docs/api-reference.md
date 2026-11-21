@@ -9,7 +9,7 @@ All application endpoints are versioned under `/api/v1`. Interactive documentati
 - **Content type:** `application/json`, except logo/image/document uploads (`multipart/form-data`).
 - **Authentication:** `Authorization: Bearer <access_token>` for protected endpoints.
 - **Request Tracing:** All responses include `X-Request-ID`. Clients can pass a custom `X-Request-ID` header which will be preserved and propagated.
-- **Idempotency:** Write requests (`POST`, `PUT`, `PATCH`) support the `Idempotency-Key: <unique-uuid>` header. Repeated requests return cached responses with `Idempotent-Replayed: true`.
+- **Idempotency:** Write requests (`POST`, `PUT`, `PATCH`) support the `Idempotency-Key: <unique-uuid>` header. Repeated requests return cached responses with `Idempotent-Replayed: true` within the same API process. The cache is currently in-memory and is not shared across workers or restarts.
 - **Standard Error Envelope:** Errors return a consistent schema:
   ```json
   {
@@ -386,6 +386,32 @@ Prefix: `/api/v1/dealerships/{dealership_id}/staff`
 ### DELETE `/staff/{user_id}`
 
 Deactivates the staff member. `400` if an admin attempts to remove themselves; `409` if it would remove the last active admin.
+
+## Customer Leads
+
+Prefix: `/api/v1/dealerships/{dealership_id}/leads`
+
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| POST | `` | Public or optional Bearer | Capture a consented inquiry |
+| GET | `` | Staff | List dealership leads; optional `status`, `limit` (1–500), and `offset` |
+| PATCH | `/{lead_id}` | Staff | Update pipeline status, active staff assignment, and/or follow-up time |
+| POST | `/{lead_id}/convert` | Staff | Link a matching test-drive booking and set `test_drive_scheduled` |
+
+`POST /leads` requires `name`, `email`, `message`, and
+`consent_to_contact: true`. `phone` and `requested_vehicle_id` are optional.
+The source is one of `website`, `assistant`, `phone`, `walk_in`, or `referral`.
+The server records the consent timestamp. If an authenticated customer submits
+the inquiry, the email must match that account.
+
+`PATCH /leads/{lead_id}` accepts statuses `new`, `contacted`, `qualified`,
+`won`, `lost`, and `follow_up`; linking a booking is the only way to set
+`test_drive_scheduled`. Follow-up timestamps must include a timezone. Assignment
+is restricted to active staff belonging to the same dealership.
+
+`POST /leads/{lead_id}/convert` accepts `{ "booking_id": 42 }`. The booking must
+belong to the dealership, remain booked or completed, and have a customer email
+matching the lead. A booking can be linked to only one lead.
 
 ## Test Drives
 

@@ -90,6 +90,10 @@ class Settings(BaseSettings):
         default="10/minute",
         validation_alias=AliasChoices("AUTH_RATE_LIMIT", "auth_rate_limit"),
     )
+    assistant_rate_limit: str = Field(
+        default="20/minute",
+        validation_alias=AliasChoices("ASSISTANT_RATE_LIMIT", "assistant_rate_limit"),
+    )
     embedding_api_url: str | None = Field(
         default=None,
         validation_alias=AliasChoices("EMBEDDING_API_URL", "embedding_api_url"),

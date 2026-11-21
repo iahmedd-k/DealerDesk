@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
@@ -106,9 +107,10 @@ class BrandResponse(BaseModel):
     id: int
     dealership_id: int
     name: str
-    logo_url: str | None
+    logo_url: str | None = None
     is_active: bool
     is_deleted: bool
+    vehicles_count: int = 0
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -248,8 +250,40 @@ class DealershipUpdateRequest(BaseModel):
 class DealershipResponse(DealershipUpdateRequest):
     id: int
     is_active: bool
+    subscription_plan: str = "pro"
+    subscription_status: str = "active"
+    monthly_price: float = 499.0
+    max_brands: int = 10
+    max_vehicles: int = 250
+    created_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class DealershipDetailedResponse(DealershipResponse):
+    brands_count: int = 0
+    vehicles_count: int = 0
+    staff_count: int = 0
+
+
+class DealershipSubscriptionUpdateRequest(BaseModel):
+    subscription_plan: str | None = Field(default=None)
+    subscription_status: str | None = Field(default=None)
+    monthly_price: Decimal | None = Field(default=None, ge=0)
+    max_brands: int | None = Field(default=None, ge=1)
+    max_vehicles: int | None = Field(default=None, ge=1)
+    is_active: bool | None = None
+
+
+class PlatformMetricsResponse(BaseModel):
+    total_dealerships: int
+    active_dealerships: int
+    total_mrr: float
+    total_vehicles: int
+    total_bookings: int
+    total_staff: int
+    total_brands: int
+    plan_distribution: dict[str, int]
 
 
 class StaffUpdateRequest(BaseModel):
@@ -332,9 +366,100 @@ class TestDriveBookingResponse(BaseModel):
     dealership_id: int
     vehicle_id: int
     customer_id: int
+    customer_name: str | None = None
+    customer_email: EmailStr | None = None
+    vehicle_name: str | None = None
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
     status: str
     created_at: datetime
     cancelled_at: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CustomerLeadCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    email: EmailStr
+    phone: str | None = Field(default=None, max_length=32)
+    message: str = Field(min_length=1, max_length=2000)
+    source: Literal["website", "assistant", "phone", "walk_in", "referral"] = "website"
+    requested_vehicle_id: int | None = Field(default=None, ge=1)
+    consent_to_contact: Literal[True]
+
+    @field_validator("name", "message")
+    @classmethod
+    def trim_required_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("value cannot be blank")
+        return value
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: EmailStr) -> str:
+        return str(value).lower()
+
+    @field_validator("phone")
+    @classmethod
+    def normalize_phone(cls, value: str | None) -> str | None:
+        if value is not None:
+            value = value.strip()
+            return value or None
+        return value
+
+
+class CustomerLeadUpdateRequest(BaseModel):
+    status: Literal[
+        "new",
+        "contacted",
+        "qualified",
+        "test_drive_scheduled",
+        "won",
+        "lost",
+        "follow_up",
+    ] | None = None
+    assigned_to_user_id: int | None = Field(default=None, ge=1)
+    next_follow_up_at: datetime | None = None
+
+    @field_validator("next_follow_up_at")
+    @classmethod
+    def validate_follow_up_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.utcoffset() is None:
+            raise ValueError("next_follow_up_at must include a timezone")
+        return value
+
+
+class CustomerLeadConvertRequest(BaseModel):
+    booking_id: int = Field(ge=1)
+
+
+class CustomerLeadResponse(BaseModel):
+    id: int
+    dealership_id: int
+    customer_id: int | None
+    requested_vehicle_id: int | None
+    assigned_to_user_id: int | None
+    test_drive_booking_id: int | None
+    name: str
+    email: EmailStr
+    phone: str | None
+    message: str
+    source: str
+    status: Literal[
+        "new",
+        "contacted",
+        "qualified",
+        "test_drive_scheduled",
+        "won",
+        "lost",
+        "follow_up",
+    ]
+    consent_to_contact: bool
+    consented_at: datetime | None
+    next_follow_up_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 

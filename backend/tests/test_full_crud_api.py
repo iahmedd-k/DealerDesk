@@ -75,10 +75,10 @@ def test_auth_profile_refresh_reset_and_delete(client, db, monkeypatch) -> None:
     )
     assert requested.status_code == 200
     reset = db.query(PasswordResetToken).one()
-    assert reset.token == reset_email["token"]
+    assert reset.token != reset_email["token"]
     confirmed = client.post(
         "/api/v1/auth/reset-password",
-        json={"token": reset.token, "new_password": "ChangedPassword!1"},
+        json={"token": reset_email["token"], "new_password": "ChangedPassword!1"},
     )
     assert confirmed.status_code == 200
     assert client.get("/api/v1/auth/me", headers=headers).status_code == 401
@@ -203,6 +203,27 @@ def test_dealership_staff_and_vehicle_crud(client, seeded_users) -> None:
         },
     )
     vehicle_id = vehicle.json()["id"]
+    empty_update = client.patch(
+        f"/api/v1/dealerships/{dealership_id}/vehicles/{vehicle_id}",
+        headers=headers,
+        json={},
+    )
+    assert empty_update.status_code == 422
+    clear_description = client.patch(
+        f"/api/v1/dealerships/{dealership_id}/vehicles/{vehicle_id}",
+        headers=headers,
+        json={"description": None},
+    )
+    assert clear_description.status_code == 200
+    assert clear_description.json()["description"] is None
+    assert (
+        client.patch(
+            f"/api/v1/dealerships/{dealership_id}/vehicles/{vehicle_id}",
+            headers=headers,
+            json={"price": None},
+        ).status_code
+        == 422
+    )
     assert (
         client.get(
             f"/api/v1/dealerships/{dealership_id}/vehicles/{vehicle_id}",

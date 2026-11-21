@@ -1,20 +1,22 @@
 from datetime import datetime
+from typing import Literal
 from pydantic import BaseModel, Field
 
 
 class AssistantMessage(BaseModel):
-    role: str = Field(description="'user', 'assistant', or 'system'")
-    content: str = Field(description="Message text content")
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=2000)
 
 
 class AssistantChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000, description="Customer message or inquiry")
-    brand_id: int | None = Field(default=None, description="Optional brand filter for multi-brand dealerships")
+    brand_id: int | None = Field(default=None, ge=1, description="Optional brand filter for multi-brand dealerships")
     conversation_history: list[AssistantMessage] = Field(
         default_factory=list,
+        max_length=12,
         description="Previous conversation turns for context continuity",
     )
-    channel: str = Field(default="website", description="Channel origin: 'website', 'whatsapp', or 'api'")
+    channel: Literal["website", "whatsapp", "api"] = "website"
 
 
 class AssistantSource(BaseModel):

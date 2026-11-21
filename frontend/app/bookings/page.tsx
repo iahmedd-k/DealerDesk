@@ -21,14 +21,7 @@ import {
 import Shell from "../components/Shell";
 import { useAuth } from "../providers";
 import { api } from "../api";
-import {
-  MOCK_BOOKINGS,
-  MOCK_TEST_DRIVE_SLOTS,
-  MOCK_VEHICLES,
-  TestDriveBooking,
-  TestDriveSlot,
-  Vehicle,
-} from "../lib/mockData";
+import type { TestDriveBooking, TestDriveSlot, Vehicle } from "../lib/types";
 
 function BookingsInner() {
   const searchParams = useSearchParams();
@@ -36,15 +29,14 @@ function BookingsInner() {
   const preselectedVehicleId = searchParams.get("vehicle");
 
   const [activeTab, setActiveTab] = useState<"slots" | "bookings">("slots");
-  const [slots, setSlots] = useState<TestDriveSlot[]>(MOCK_TEST_DRIVE_SLOTS);
-  const [bookings, setBookings] = useState<TestDriveBooking[]>(MOCK_BOOKINGS);
-  const [vehicles, setVehicles] = useState<Vehicle[]>(MOCK_VEHICLES);
+  const [slots, setSlots] = useState<TestDriveSlot[]>([]);
+  const [bookings, setBookings] = useState<TestDriveBooking[]>([]);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [loading, setLoading] = useState(true);
 
   // Booking Modal
   const [bookingSlot, setBookingSlot] = useState<TestDriveSlot | null>(null);
   const [confirmedCheck, setConfirmedCheck] = useState(true);
-  const [customerEmail, setCustomerEmail] = useState(user?.email || "customer@demo.com");
-  const [customerName, setCustomerName] = useState(user?.name || "Sophia Martinez");
 
   // Reschedule / Cancel Modals
   const [actionBooking, setActionBooking] = useState<{
@@ -62,101 +54,119 @@ function BookingsInner() {
   const isStaff = user && user.role !== "customer";
 
   useEffect(() => {
-    api<TestDriveSlot[]>(`/dealerships/${activeDealershipId}/test-drive-slots`)
-      .then((data) => {
-        if (Array.isArray(data) && data.length) setSlots(data);
+    if (!activeDealershipId) {
+      setLoading(false);
+      setErrorMsg("Select a dealership workspace to view test drives.");
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setErrorMsg("");
+    Promise.all([
+      api<TestDriveSlot[]>(`/dealerships/${activeDealershipId}/test-drive-slots?include_inactive=true`),
+      api<TestDriveBooking[]>(`/dealerships/${activeDealershipId}/test-drive-bookings`),
+      api<Vehicle[] | Vehicle>(user?.role === "customer"
+        ? `/dealerships/${activeDealershipId}/vehicles/public`
+        : `/dealerships/${activeDealershipId}/vehicles`).then((result) =>
+          Array.isArray(result) ? result : [result],
+        ),
+    ])
+      .then(([nextSlots, nextBookings, nextVehicles]) => {
+        if (cancelled) return;
+        setSlots(nextSlots);
+        setBookings(nextBookings);
+        setVehicles(nextVehicles);
       })
-      .catch(() => {});
-
-    api<TestDriveBooking[]>(`/dealerships/${activeDealershipId}/test-drive-bookings`)
-      .then((data) => {
-        if (Array.isArray(data) && data.length) setBookings(data);
+      .catch((cause: unknown) => {
+        if (!cancelled) setErrorMsg(cause instanceof Error ? cause.message : "Could not load test drives.");
       })
-      .catch(() => {});
-  }, [activeDealershipId]);
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
 
-  function handleBookSlot(e: React.FormEvent) {
-    e.preventDefault();
-    if (!bookingSlot) return;
-
-    const matchedVehicle = vehicles.find((v) => v.id === bookingSlot.vehicle_id);
-    const newBooking: TestDriveBooking = {
-      id: Math.floor(Math.random() * 9000) + 1000,
-      slot_id: bookingSlot.id,
-      dealership_id: activeDealershipId,
-      vehicle_id: bookingSlot.vehicle_id,
-      vehicle_name: matchedVehicle ? `${matchedVehicle.model_year} ${matchedVehicle.make} ${matchedVehicle.model}` : "Demo Vehicle",
-      customer_id: user?.id || 501,
-      customer_name: customerName,
-      customer_email: customerEmail,
-      status: "booked",
-      created_at: new Date().toISOString(),
-      cancelled_at: null,
-      starts_at: bookingSlot.starts_at,
-      ends_at: bookingSlot.ends_at,
+    return () => {
+      cancelled = true;
     };
+  }, [activeDealershipId, user?.role]);
 
-    setBookings([newBooking, ...bookings]);
-    setSlots(
-      slots.map((s) =>
-        s.id === bookingSlot.id
-          ? {
-              ...s,
-              booked_count: s.booked_count + 1,
-              remaining_capacity: Math.max(0, (s.remaining_capacity || s.capacity) - 1),
-            }
-          : s
-      )
-    );
-
-    setBookingSlot(null);
-    setSuccessMsg(`Test drive reserved successfully for ${newBooking.vehicle_name}! An explicit confirmation has been recorded.`);
-    setTimeout(() => setSuccessMsg(""), 6000);
-  }
-
-  function handleCancelBooking(e: React.FormEvent) {
+  async function handleBookSlot(e: React.FormEvent) {
     e.preventDefault();
-    if (!actionBooking) return;
-
-    setBookings(
-      bookings.map((b) =>
-        b.id === actionBooking.booking.id
-          ? { ...b, status: "cancelled", cancelled_at: new Date().toISOString() }
-          : b
-      )
-    );
-
-    setActionBooking(null);
-    setSuccessMsg("Test drive booking cancelled with identity verification.");
-    setTimeout(() => setSuccessMsg(""), 5000);
+    if (!bookingSlot || !activeDealershipId) return;
+    setErrorMsg("");
+    try {
+      const created = await api<TestDriveBooking>(
+        `/dealerships/${activeDealershipId}/test-drive-slots/${bookingSlot.id}/bookings`,
+        { method: "POST", body: JSON.stringify({ confirmed: confirmedCheck }) },
+      );
+      setBookings((current) => [created, ...current]);
+      setSlots((current) => current.map((slot) => slot.id === bookingSlot.id
+        ? { ...slot, booked_count: slot.booked_count + 1 }
+        : slot));
+      const vehicle = vehicles.find((item) => item.id === bookingSlot.vehicle_id);
+      setBookingSlot(null);
+      setSuccessMsg(`Test drive confirmed${vehicle ? ` for ${vehicle.model_year} ${vehicle.make} ${vehicle.model}` : ""}.`);
+    } catch (cause) {
+      setErrorMsg(cause instanceof Error ? cause.message : "Could not book this test drive.");
+    }
   }
 
-  function handleRescheduleBooking(e: React.FormEvent) {
+  async function handleCancelBooking(e: React.FormEvent) {
     e.preventDefault();
-    if (!actionBooking || !newSlotId) return;
-
-    const targetSlot = slots.find((s) => s.id === Number(newSlotId));
-    setBookings(
-      bookings.map((b) =>
-        b.id === actionBooking.booking.id
-          ? {
-              ...b,
-              slot_id: Number(newSlotId),
-              starts_at: targetSlot?.starts_at,
-              ends_at: targetSlot?.ends_at,
-            }
-          : b
-      )
-    );
-
-    setActionBooking(null);
-    setSuccessMsg("Booking rescheduled successfully to requested slot.");
-    setTimeout(() => setSuccessMsg(""), 5000);
+    if (!actionBooking || !activeDealershipId) return;
+    setErrorMsg("");
+    try {
+      await api<void>(
+        `/dealerships/${activeDealershipId}/test-drive-bookings/${actionBooking.booking.id}/cancel`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            verification_email: verificationEmail || undefined,
+            reason: cancelReason || undefined,
+          }),
+        },
+      );
+      setBookings((current) => current.map((booking) => booking.id === actionBooking.booking.id
+        ? { ...booking, status: "cancelled", cancelled_at: new Date().toISOString() }
+        : booking));
+      setActionBooking(null);
+      setSuccessMsg("Test drive cancelled.");
+    } catch (cause) {
+      setErrorMsg(cause instanceof Error ? cause.message : "Could not cancel this test drive.");
+    }
   }
 
-  const filteredSlots = preselectedVehicleId
-    ? slots.filter((s) => String(s.vehicle_id) === preselectedVehicleId)
-    : slots;
+  async function handleRescheduleBooking(e: React.FormEvent) {
+    e.preventDefault();
+    if (!actionBooking || !newSlotId || !activeDealershipId) return;
+    setErrorMsg("");
+    try {
+      const updated = await api<TestDriveBooking>(
+        `/dealerships/${activeDealershipId}/test-drive-bookings/${actionBooking.booking.id}/reschedule`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            new_slot_id: Number(newSlotId),
+            verification_email: verificationEmail || undefined,
+            confirmed: true,
+          }),
+        },
+      );
+      setBookings((current) => current.map((booking) => booking.id === updated.id ? updated : booking));
+      setActionBooking(null);
+      setSuccessMsg("Test drive rescheduled.");
+    } catch (cause) {
+      setErrorMsg(cause instanceof Error ? cause.message : "Could not reschedule this test drive.");
+    }
+  }
+
+  const filteredSlots = slots.filter((slot) => {
+    const remaining = slot.remaining_capacity ?? slot.capacity - slot.booked_count;
+    return slot.is_active
+      && remaining > 0
+      && new Date(slot.starts_at).getTime() > Date.now()
+      && (!preselectedVehicleId || String(slot.vehicle_id) === preselectedVehicleId);
+  });
 
   return (
     <Shell>
@@ -330,7 +340,7 @@ function BookingsInner() {
             <thead>
               <tr>
                 <th>Booking ID</th>
-                <th>Customer Name</th>
+                {!user || user.role !== "customer" ? <th>Customer</th> : null}
                 <th>Vehicle</th>
                 <th>Scheduled Date & Time</th>
                 <th>Status</th>
@@ -338,33 +348,49 @@ function BookingsInner() {
               </tr>
             </thead>
             <tbody>
-              {bookings.map((b) => (
+              {bookings.map((b) => {
+                const slot = slots.find((item) => item.id === b.slot_id);
+                const vehicle = vehicles.find((item) => item.id === b.vehicle_id);
+                const startsAt = b.starts_at || slot?.starts_at;
+                const customerName = b.customer_name
+                  || (user?.role === "customer" ? user.name : `Customer #${b.customer_id}`);
+                const customerEmail = b.customer_email
+                  || (user?.role === "customer" ? user.email : "");
+                const vehicleName = b.vehicle_name
+                  || (vehicle ? `${vehicle.model_year} ${vehicle.make} ${vehicle.model}` : `Vehicle #${b.vehicle_id}`);
+                return (
                 <tr key={b.id}>
                   <td className="font-mono text-xs text-slate-400">#{b.id}</td>
-                  <td>
-                    <div className="font-bold text-white text-xs">{b.customer_name}</div>
-                    <div className="text-[11px] text-slate-400">{b.customer_email}</div>
-                  </td>
+                  {!user || user.role !== "customer" ? (
+                    <td>
+                      <div className="font-bold text-white text-xs">{customerName}</div>
+                      <div className="text-[11px] text-slate-400">{customerEmail || "Contact details unavailable"}</div>
+                    </td>
+                  ) : null}
                   <td>
                     <div className="font-semibold text-slate-200 text-xs">
-                      {b.vehicle_name || "Toyota Camry XSE"}
+                      {vehicleName}
                     </div>
                     <div className="text-[10px] text-slate-500">Vehicle #{b.vehicle_id}</div>
                   </td>
                   <td>
-                    <div className="text-xs text-slate-200">
-                      {new Date(b.starts_at || Date.now()).toLocaleDateString([], {
-                        weekday: "short",
-                        month: "short",
-                        day: "numeric",
-                      })}
-                    </div>
-                    <div className="text-[11px] text-slate-400 font-mono">
-                      {new Date(b.starts_at || Date.now()).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </div>
+                    {startsAt ? (
+                      <>
+                        <div className="text-xs text-slate-200">
+                          {new Date(startsAt).toLocaleDateString([], {
+                            weekday: "short",
+                            month: "short",
+                            day: "numeric",
+                          })}
+                        </div>
+                        <div className="text-[11px] text-slate-400 font-mono">
+                          {new Date(startsAt).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </div>
+                      </>
+                    ) : <span className="text-xs text-slate-500">Slot #{b.slot_id}</span>}
                   </td>
                   <td>
                     <span
@@ -401,7 +427,8 @@ function BookingsInner() {
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -442,27 +469,9 @@ function BookingsInner() {
                 </div>
               </div>
 
-              <div>
-                <label className="text-slate-300 font-semibold mb-1 block">Your Name</label>
-                <input
-                  type="text"
-                  required
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white"
-                />
-              </div>
-
-              <div>
-                <label className="text-slate-300 font-semibold mb-1 block">Contact Email</label>
-                <input
-                  type="email"
-                  required
-                  value={customerEmail}
-                  onChange={(e) => setCustomerEmail(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white"
-                />
-              </div>
+              <p className="text-xs text-slate-400">
+                This booking will be made for the signed-in account{user?.email ? ` (${user.email})` : ""}.
+              </p>
 
               <div className="pt-2">
                 <label className="flex items-center gap-2 text-slate-300 cursor-pointer">

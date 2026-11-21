@@ -1,10 +1,9 @@
 from fastapi import APIRouter, Depends, Request, status
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 from app.core.roles import DEALERSHIP_ADMIN_ROLE
+from app.core.limiter import limiter
 from app.db.session import get_db
 from app.dependencies.auth import bearer_scheme, get_current_user
 from app.dependencies.workspace import require_roles
@@ -23,7 +22,6 @@ from app.services import account_service
 
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
-limiter = Limiter(key_func=get_remote_address, default_limits=[])
 
 
 @router.post(

@@ -15,11 +15,15 @@ def test_alembic_configuration_and_head_revision() -> None:
     heads = script.get_heads()
     assert len(heads) == 1
     head_rev = heads[0]
-    assert head_rev == "f871c43b2a19"
+    assert head_rev == "b3d5e8a1c420"
 
     head_revision_obj = script.get_revision(head_rev)
     assert head_revision_obj is not None
-    assert head_revision_obj.down_revision == "d45e22bb9a73"
+    assert head_revision_obj.down_revision == "a4c9d2f17e60"
+
+    price_revision = script.get_revision("f871c43b2a19")
+    assert price_revision is not None
+    assert price_revision.down_revision == "d45e22bb9a73"
 
     audit_rev = script.get_revision("d45e22bb9a73")
     assert audit_rev is not None
