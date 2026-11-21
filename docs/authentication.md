@@ -11,10 +11,11 @@ DealerDesk uses email/password authentication with JWT access tokens, rotating r
 
 | Role | Dealership-bound | Capabilities |
 | --- | --- | --- |
-| `customer` | No | Read active dealerships, inventory, and slots; book/cancel own test drives; manage own profile. |
-| `dealership_admin` | Yes | Everything for one dealership, including staff, settings, and dealership profile. |
-| `manager` | Yes | Manage brands and inventory, view staff and invitations. Cannot change dealership settings or staff roles. |
-| `sales_rep` | Yes | Create/update vehicles and toggle availability. |
+| `dealerdesk_admin` | No | Platform superadmin with unrestricted cross-dealership management, platform-wide workspace listing, and full access to any dealership workspace. |
+| `customer` | No | Read active dealerships, inventory, and slots; book, reschedule, and cancel own test drives; manage own profile. |
+| `dealership_admin` | Yes | Everything for one dealership, including staff, settings, dealership profile, and all bookings. |
+| `manager` | Yes | Manage brands, inventory, view staff, invitations, and manage test-drive bookings. Cannot change dealership settings or staff roles. |
+| `sales_rep` | Yes | Create/update vehicles, toggle availability, and view/manage test-drive bookings. |
 
 Authorization is enforced server-side with two dependencies:
 
@@ -147,12 +148,20 @@ The email content includes the temporary password and activation token. Delivery
 - A dealership admin cannot remove themselves via the staff endpoint (`400`).
 - Inactive or deleted dealerships block all workspace routes (`403` for role dependencies, `404` for scoped reads).
 
+## Demo accounts
+
+The backend includes idempotent demo accounts for local development and verification:
+- **Platform Superadmin (`dealerdesk_admin`)**: `dealerdesk@demo.com` / `adminadmin`
+- **Dealership Admin (`dealership_admin`)**: `dealership@demo.com` / `adminpassword`
+- **Customer (`customer`)**: `customer@demo.com` / `customerpassword`
+
 ## Security notes
 
 - Access tokens are stateless JWTs; revocation relies on the deny-list and version check.
 - Refresh/reset/activation tokens are high-entropy random strings stored in plaintext in the database.
 - The default JWT algorithm is `HS256`; keep the secret long, random, and out of source control.
-- There is no rate limiting, account lockout, email verification, or CORS configuration yet. See [Roadmap & Limitations](roadmap.md).
+- CORS middleware is implemented and configured via `CORS_ORIGINS`.
+- Rate limiting, account lockout, and email verification remain future enhancements. See [Roadmap & Limitations](roadmap.md).
 
 ## Related documents
 

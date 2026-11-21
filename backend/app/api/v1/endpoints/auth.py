@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
@@ -21,6 +23,7 @@ from app.services import account_service
 
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+limiter = Limiter(key_func=get_remote_address, default_limits=[])
 
 
 @router.post(
@@ -35,7 +38,9 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
         422: {"description": "The request data failed validation."},
     },
 )
+@limiter.limit("10/minute")
 def signup(
+    request: Request,
     payload: SignUpRequest,
     db: Session = Depends(get_db),
 ) -> User:
@@ -57,7 +62,9 @@ def signup(
         422: {"description": "The login request failed validation."},
     },
 )
+@limiter.limit("10/minute")
 def login(
+    request: Request,
     payload: LoginRequest,
     db: Session = Depends(get_db),
 ) -> TokenResponse:
@@ -127,7 +134,9 @@ def delete_me(
     summary="Rotate refresh token",
     description="Issues a new access token and refresh token, revoking the refresh token provided.",
 )
+@limiter.limit("10/minute")
 def refresh_access_token(
+    request: Request,
     payload: RefreshTokenRequest,
     db: Session = Depends(get_db),
 ) -> TokenResponse:
@@ -135,7 +144,9 @@ def refresh_access_token(
 
 
 @router.post("/request-password-reset")
+@limiter.limit("5/minute")
 def request_password_reset(
+    request: Request,
     payload: PasswordResetRequest,
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
@@ -143,7 +154,9 @@ def request_password_reset(
 
 
 @router.post("/reset-password")
+@limiter.limit("5/minute")
 def reset_password(
+    request: Request,
     payload: PasswordResetConfirm,
     db: Session = Depends(get_db),
 ) -> dict[str, str]:

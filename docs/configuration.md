@@ -37,15 +37,33 @@ Refresh tokens have a fixed 30-day lifetime in code.
 | `DATABASE_POOL_PRE_PING` | `true` | Validate connections before use. |
 | `DATABASE_SCHEMA` | unset | Optional PostgreSQL schema; sets the connection `search_path`. Used by tests for `dealerdesk_test`. |
 
-### Supabase Storage (brand logos)
+### CORS and browser origins
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Comma-separated list of allowed browser client origins. |
+
+### Platform administrator seed
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `DEALERDESK_ADMIN_EMAIL` | `dealerdesk@demo.com` | Email for the platform superadmin account. |
+| `DEALERDESK_ADMIN_PASSWORD` | `adminadmin` | Initial password for the platform superadmin account. |
+| `DEALERDESK_ADMIN_NAME` | `DealerDesk Platform Admin` | Display name for the platform superadmin account. |
+
+### Supabase Storage (brand logos and vehicle images)
 
 | Variable | Aliases | Default | Description |
 | --- | --- | --- | --- |
 | `SUPABASE_URL` | — | unset | Supabase project URL. |
 | `SUPABASE_KEY` | `SUPABASE_SECRET_KEY`, `SUPABASE_PUBLISHABLE_KEY` | unset | Supabase API key used by the server. |
 | `SUPABASE_BUCKET_ID` | `supabase_bucket_id` | `brand-logos` | Public storage bucket for logos. |
+| `VEHICLE_IMAGES_BUCKET_ID` | `vehicle_images_bucket_id` | `vehicle-images` | Public storage bucket for vehicle images. |
 
-If `SUPABASE_URL` or the key is missing, logo upload/delete endpoints return `503`. The bucket must exist and be publicly readable for returned URLs to work.
+If `SUPABASE_URL` or the key is missing, logo/image upload and deletion
+endpoints return `503`. Both buckets must exist and be publicly readable for
+returned URLs to work. Vehicle image uploads accept JPEG, PNG, and WebP files up
+to 10 MB; create the `vehicle-images` bucket in Supabase before uploading.
 
 ### Email (Resend)
 
@@ -54,6 +72,20 @@ If `SUPABASE_URL` or the key is missing, logo upload/delete endpoints return `50
 | `RESEND_API_KEY` | `resend_api_key` | unset | Resend API key. When unset, email delivery is skipped and status is `email_provider_pending`. |
 | `RESEND_FROM_EMAIL` | `RESEND_FROM_EMAIL` | `DealerDesk Support <support@ahmedkhandev.tech>` | Sender identity. |
 | `RESEND_REPLY_TO` | `resend_reply_to` | unset | Optional reply-to address. |
+
+### Knowledge embeddings
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `EMBEDDING_API_URL` | unset | Optional OpenAI-compatible embeddings endpoint. When unset, a deterministic local hash-embedding provider is used. |
+| `EMBEDDING_API_KEY` | unset | Optional bearer token for the embeddings endpoint. |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | Model identifier sent to the configured endpoint. |
+
+The configured endpoint must accept `POST` requests with `{ "model": "...",
+"input": ["..."] }` and return an OpenAI-compatible `data[].embedding` array.
+Keep the endpoint/model configuration stable for already-indexed documents; a
+model change requires re-uploading documents because embeddings from different
+models are not comparable.
 
 ## Example `.env`
 
@@ -70,9 +102,15 @@ DATABASE_POOL_RECYCLE=1800
 DATABASE_POOL_PRE_PING=true
 # DATABASE_SCHEMA=
 
+CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+
+DEALERDESK_ADMIN_EMAIL=dealerdesk@demo.com
+DEALERDESK_ADMIN_PASSWORD=adminadmin
+
 SUPABASE_URL=
 SUPABASE_KEY=
 SUPABASE_BUCKET_ID=brand-logos
+VEHICLE_IMAGES_BUCKET_ID=vehicle-images
 
 RESEND_API_KEY=
 RESEND_FROM_EMAIL=DealerDesk Support <support@example.com>
@@ -90,8 +128,10 @@ RESEND_REPLY_TO=
 ### Supabase Storage
 
 - Logos are written to `dealerships/{dealership_id}/brands/{brand_id}/logo`.
+- Vehicle images are written to `dealerships/{dealership_id}/vehicles/{vehicle_id}/{uuid}.{jpg|png|webp}`.
 - Uploads use `upsert: true`, `cache-control: 3600`, and the file's content type.
 - Supported: JPEG, PNG, WebP, ≤ 3 MB. The upload validates magic bytes before sending.
+- Vehicle image uploads use `upsert: false`, validate magic bytes, and accept up to 10 MB. The database stores each image's public URL and ordering; deleting an image removes both its storage object and metadata.
 
 ### Resend
 

@@ -1,4 +1,31 @@
+import os
+from pathlib import Path
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import Engine, text
+
+
+def get_alembic_config() -> Config:
+    backend_dir = Path(__file__).resolve().parents[2]
+    ini_path = backend_dir / "alembic.ini"
+    alembic_cfg = Config(str(ini_path))
+    alembic_cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+    return alembic_cfg
+
+
+def run_alembic_upgrade(revision: str = "head") -> None:
+    alembic_cfg = get_alembic_config()
+    command.upgrade(alembic_cfg, revision)
+
+
+def run_alembic_downgrade(revision: str = "-1") -> None:
+    alembic_cfg = get_alembic_config()
+    command.downgrade(alembic_cfg, revision)
+
+
+def stamp_alembic_revision(revision: str = "head") -> None:
+    alembic_cfg = get_alembic_config()
+    command.stamp(alembic_cfg, revision)
 
 
 def ensure_vehicle_brand_associations(engine: Engine) -> None:

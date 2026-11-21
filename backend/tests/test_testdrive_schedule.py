@@ -39,3 +39,55 @@ def test_dealership_registration_rejects_unknown_timezone() -> None:
                 "brands": ["Toyota"],
             }
         )
+
+
+def test_slot_response_computed_fields() -> None:
+    from datetime import datetime, timezone
+    from app.schemas.workspace import TestDriveSlotResponse, TestDriveBookingRequest
+
+    now = datetime.now(timezone.utc)
+    slot = TestDriveSlotResponse(
+        id=1,
+        vehicle_id=10,
+        starts_at=now,
+        ends_at=now + timedelta(minutes=30),
+        capacity=3,
+        booked_count=1,
+        is_active=True,
+    )
+    assert slot.remaining_capacity == 2
+    assert slot.is_available is True
+
+    full_slot = TestDriveSlotResponse(
+        id=2,
+        vehicle_id=10,
+        starts_at=now,
+        ends_at=now + timedelta(minutes=30),
+        capacity=2,
+        booked_count=2,
+        is_active=True,
+    )
+    assert full_slot.remaining_capacity == 0
+    assert full_slot.is_available is False
+
+    inactive_slot = TestDriveSlotResponse(
+        id=3,
+        vehicle_id=10,
+        starts_at=now,
+        ends_at=now + timedelta(minutes=30),
+        capacity=2,
+        booked_count=0,
+        is_active=False,
+    )
+    assert inactive_slot.remaining_capacity == 2
+    assert inactive_slot.is_available is False
+
+    # FR-017 Booking explicit confirmation schema
+    default_req = TestDriveBookingRequest()
+    assert default_req.confirmed is True
+
+    confirmed_req = TestDriveBookingRequest(confirmed=True)
+    assert confirmed_req.confirmed is True
+
+    unconfirmed_req = TestDriveBookingRequest(confirmed=False)
+    assert unconfirmed_req.confirmed is False

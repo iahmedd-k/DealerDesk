@@ -5,7 +5,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from storage3.utils import StorageException
 
-from app.core.authorization import ensure_dealership_access, ensure_role
+from app.core.authorization import (
+    ensure_dealership_access,
+    ensure_dealership_role_access,
+)
 from app.core.config import get_settings
 from app.core.errors import (
     BadGatewayError,
@@ -16,17 +19,18 @@ from app.core.errors import (
     UnprocessableEntityError,
     UnsupportedMediaTypeError,
 )
+from app.core.image_validation import ALLOWED_IMAGE_TYPES, has_valid_image_signature
 from app.core.roles import DEALERSHIP_MANAGEMENT_ROLES
 from app.core.supabase import get_supabase_client
 from app.models.user import User
 from app.models.workspace import Brand
-from app.repositories import brand_repository, dealership_repository
+from app.repositories import brand_repository
 from app.schemas.workspace import BrandCreateRequest, BrandUpdateRequest
+from app.services import dealership_service
 
 
 logger = logging.getLogger(__name__)
 MAX_LOGO_SIZE = 3 * 1024 * 1024
-ALLOWED_LOGO_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
 MAX_BRANDS_PER_DEALERSHIP = 20
 
 
@@ -38,10 +42,15 @@ def list_brands(
     include_inactive: bool = False,
     include_deleted: bool = False,
 ) -> list[Brand]:
-    ensure_dealership_access(current_user, dealership_id)
-    _ensure_active_dealership(db, dealership_id)
     if include_inactive or include_deleted:
-        ensure_role(current_user, *DEALERSHIP_MANAGEMENT_ROLES)
+        ensure_dealership_role_access(
+            current_user,
+            dealership_id,
+            *DEALERSHIP_MANAGEMENT_ROLES,
+        )
+    else:
+        ensure_dealership_access(current_user, dealership_id)
+    dealership_service.get_active_dealership(db, dealership_id)
     return brand_repository.list_for_dealership(
         db,
         dealership_id,
@@ -56,11 +65,17 @@ def create_brand(
     current_user: User,
     payload: BrandCreateRequest,
 ) -> Brand:
-    ensure_dealership_access(current_user, dealership_id)
-    ensure_role(current_user, *DEALERSHIP_MANAGEMENT_ROLES)
+    ensure_dealership_role_access(
+        current_user,
+        dealership_id,
+        *DEALERSHIP_MANAGEMENT_ROLES,
+    )
     if brand_repository.lock_active_dealership(db, dealership_id) is None:
         raise NotFoundError("Dealership not found")
-    if brand_repository.count_not_deleted(db, dealership_id) >= MAX_BRANDS_PER_DEALERSHIP:
+    if (
+        brand_repository.count_not_deleted(db, dealership_id)
+        >= MAX_BRANDS_PER_DEALERSHIP
+    ):
         raise ConflictError("A dealership can have at most 20 brands")
     try:
         return brand_repository.create(
@@ -78,14 +93,20 @@ def restore_brand(
     brand_id: int,
     current_user: User,
 ) -> Brand:
-    ensure_dealership_access(current_user, dealership_id)
-    ensure_role(current_user, *DEALERSHIP_MANAGEMENT_ROLES)
+    ensure_dealership_role_access(
+        current_user,
+        dealership_id,
+        *DEALERSHIP_MANAGEMENT_ROLES,
+    )
     if brand_repository.lock_active_dealership(db, dealership_id) is None:
         raise NotFoundError("Dealership not found")
     brand = _get_brand(db, dealership_id, brand_id, include_deleted=True)
     if not brand.is_deleted:
         raise ConflictError("Brand is not deleted")
-    if brand_repository.count_not_deleted(db, dealership_id) >= MAX_BRANDS_PER_DEALERSHIP:
+    if (
+        brand_repository.count_not_deleted(db, dealership_id)
+        >= MAX_BRANDS_PER_DEALERSHIP
+    ):
         raise ConflictError("A dealership can have at most 20 brands")
     brand.is_deleted = False
     brand.is_active = False
@@ -104,16 +125,19 @@ def upload_brand_logo(
     content_type: str | None,
     content: bytes,
 ) -> Brand:
-    ensure_dealership_access(current_user, dealership_id)
-    ensure_role(current_user, *DEALERSHIP_MANAGEMENT_ROLES)
-    _ensure_active_dealership(db, dealership_id)
+    ensure_dealership_role_access(
+        current_user,
+        dealership_id,
+        *DEALERSHIP_MANAGEMENT_ROLES,
+    )
+    dealership_service.get_active_dealership(db, dealership_id)
     brand = _get_brand(db, dealership_id, brand_id)
     content_type = content_type or ""
-    if content_type not in ALLOWED_LOGO_TYPES:
+    if content_type not in ALLOWED_IMAGE_TYPES:
         raise UnsupportedMediaTypeError("Logo must be a JPEG, PNG, or WebP image")
     if len(content) > MAX_LOGO_SIZE:
         raise PayloadTooLargeError("Logo must be 3 MB or smaller")
-    if not _has_valid_image_signature(content_type, content):
+    if not has_valid_image_signature(content_type, content):
         raise UnprocessableEntityError("Logo content does not match its type")
     try:
         client = get_supabase_client()
@@ -145,9 +169,12 @@ def delete_brand_logo(
     brand_id: int,
     current_user: User,
 ) -> None:
-    ensure_dealership_access(current_user, dealership_id)
-    ensure_role(current_user, *DEALERSHIP_MANAGEMENT_ROLES)
-    _ensure_active_dealership(db, dealership_id)
+    ensure_dealership_role_access(
+        current_user,
+        dealership_id,
+        *DEALERSHIP_MANAGEMENT_ROLES,
+    )
+    dealership_service.get_active_dealership(db, dealership_id)
     brand = _get_brand(db, dealership_id, brand_id)
     if brand.logo_path is None:
         return
@@ -170,9 +197,12 @@ def update_brand(
     current_user: User,
     payload: BrandUpdateRequest,
 ) -> Brand:
-    ensure_dealership_access(current_user, dealership_id)
-    ensure_role(current_user, *DEALERSHIP_MANAGEMENT_ROLES)
-    _ensure_active_dealership(db, dealership_id)
+    ensure_dealership_role_access(
+        current_user,
+        dealership_id,
+        *DEALERSHIP_MANAGEMENT_ROLES,
+    )
+    dealership_service.get_active_dealership(db, dealership_id)
     brand = _get_brand(db, dealership_id, brand_id)
     updates = payload.model_dump(exclude_unset=True)
     if not updates:
@@ -198,9 +228,12 @@ def delete_brand(
     brand_id: int,
     current_user: User,
 ) -> None:
-    ensure_dealership_access(current_user, dealership_id)
-    ensure_role(current_user, *DEALERSHIP_MANAGEMENT_ROLES)
-    _ensure_active_dealership(db, dealership_id)
+    ensure_dealership_role_access(
+        current_user,
+        dealership_id,
+        *DEALERSHIP_MANAGEMENT_ROLES,
+    )
+    dealership_service.get_active_dealership(db, dealership_id)
     brand = _get_brand(db, dealership_id, brand_id)
     brand_repository.deactivate_future_slots(db, brand.id)
     brand.is_active = False
@@ -215,7 +248,7 @@ def get_brand(
     current_user: User,
 ) -> Brand:
     ensure_dealership_access(current_user, dealership_id)
-    _ensure_active_dealership(db, dealership_id)
+    dealership_service.get_active_dealership(db, dealership_id)
     return _get_brand(db, dealership_id, brand_id)
 
 
@@ -235,21 +268,3 @@ def _get_brand(
     if brand is None:
         raise NotFoundError("Brand not found")
     return brand
-
-
-def _ensure_active_dealership(db: Session, dealership_id: int) -> None:
-    if dealership_repository.get_active_by_id(db, dealership_id) is None:
-        raise NotFoundError("Dealership not found")
-
-
-def _has_valid_image_signature(content_type: str, content: bytes) -> bool:
-    if content_type == "image/jpeg":
-        return content.startswith(b"\xff\xd8\xff")
-    if content_type == "image/png":
-        return content.startswith(b"\x89PNG\r\n\x1a\n")
-    return (
-        content_type == "image/webp"
-        and len(content) >= 12
-        and content.startswith(b"RIFF")
-        and content[8:12] == b"WEBP"
-    )

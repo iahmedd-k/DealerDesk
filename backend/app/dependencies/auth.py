@@ -13,6 +13,7 @@ from app.services import auth_service
 
 
 bearer_scheme = HTTPBearer()
+optional_bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def get_current_user(
@@ -43,3 +44,15 @@ def get_current_user(
     if user is None:
         raise UnauthorizedError("User not found")
     return user
+
+
+def get_optional_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(optional_bearer_scheme),
+    db: Session = Depends(get_db),
+) -> User | None:
+    if credentials is None:
+        return None
+    try:
+        return get_current_user(credentials, db)
+    except Exception:
+        return None

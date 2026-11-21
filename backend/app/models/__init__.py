@@ -1,5 +1,6 @@
 """Database models."""
 
+from app.models.audit import AuditLog
 from app.models.user import (
     PasswordResetToken,
     RefreshToken,
@@ -10,16 +11,22 @@ from app.models.user import (
 from app.models.workspace import (
     Brand,
     Dealership,
+    KnowledgeChunk,
+    KnowledgeDocument,
     StaffInvitation,
     TestDriveBooking,
     TestDriveSettings,
     TestDriveSlot,
     Vehicle,
+    VehicleImage,
 )
 
 __all__ = [
+    "AuditLog",
     "Brand",
     "Dealership",
+    "KnowledgeChunk",
+    "KnowledgeDocument",
     "PasswordResetToken",
     "RefreshToken",
     "RevokedAccessToken",
@@ -30,4 +37,5 @@ __all__ = [
     "User",
     "UserTokenVersion",
     "Vehicle",
+    "VehicleImage",
 ]

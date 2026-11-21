@@ -13,6 +13,7 @@ erDiagram
     DEALERSHIPS ||--o{ TEST_DRIVE_SLOTS : schedules
     DEALERSHIPS ||--o{ TEST_DRIVE_BOOKINGS : receives
     DEALERSHIPS ||--o{ STAFF_INVITATIONS : issues
+    DEALERSHIPS ||--o{ KNOWLEDGE_DOCUMENTS : indexes
 
     BRANDS ||--o{ VEHICLES : classifies
     VEHICLES ||--o{ TEST_DRIVE_SLOTS : offers
@@ -24,8 +25,11 @@ erDiagram
     USERS ||--|| USER_TOKEN_VERSIONS : tracks
     USERS ||--o{ TEST_DRIVE_BOOKINGS : books
     USERS ||--|| STAFF_INVITATIONS : activates
+    USERS ||--o{ KNOWLEDGE_DOCUMENTS : uploads
 
     TEST_DRIVE_SLOTS ||--o{ TEST_DRIVE_BOOKINGS : contains
+    BRANDS ||--o{ KNOWLEDGE_DOCUMENTS : scopes
+    KNOWLEDGE_DOCUMENTS ||--o{ KNOWLEDGE_CHUNKS : contains
 ```
 
 ## Tables
@@ -37,11 +41,11 @@ Application identities for customers and dealership staff.
 | Column | Type | Constraints | Notes |
 | --- | --- | --- | --- |
 | `id` | integer | PK, indexed | |
-| `dealership_id` | integer | FK → `dealerships.id`, nullable, indexed | `NULL` for customers |
+| `dealership_id` | integer | FK → `dealerships.id`, nullable, indexed | `NULL` for customers and `dealerdesk_admin` |
 | `name` | varchar(100) | not null | Display name |
 | `email` | varchar(320) | unique, indexed | Lower-cased on write |
 | `password` | varchar(255) | not null | Argon2 hash |
-| `role` | varchar(32) | default `customer`, indexed | `customer`, `dealership_admin`, `manager`, `sales_rep` |
+| `role` | varchar(32) | default `customer`, indexed | `customer`, `dealership_admin`, `manager`, `sales_rep`, `dealerdesk_admin` |
 | `is_active` | boolean | default true | Soft-deactivation flag |
 | `must_change_password` | boolean | default false | Set for invited staff |
 
@@ -140,12 +144,46 @@ Index: `uq_brand_dealership_name_active` — unique on `(dealership_id, lower(na
 | `model_year` | integer | not null | API validates 1886–2200 |
 | `variant` | varchar(120) | nullable | |
 | `description` | text | nullable | |
-| `price` | float | not null | API validates ≥ 0 |
+| `price` | numeric(12,2) | not null | API validates ≥ 0; returned as a JSON number |
 | `stock_number` | varchar(64) | not null | Unique per dealership |
 | `is_available` | boolean | default true | |
 | `test_drive_enabled` | boolean | default false | |
 
 Constraint: `uq_vehicle_dealership_stock` — unique `(dealership_id, stock_number)`.
+
+### `knowledge_documents`
+
+One row per uploaded and successfully indexed document. The original file bytes
+are not retained; extracted text is stored in its chunks.
+
+| Column | Type | Constraints | Notes |
+| --- | --- | --- | --- |
+| `id` | integer | PK | |
+| `dealership_id` | integer | FK → `dealerships.id`, indexed | Tenant boundary |
+| `brand_id` | integer | FK → `brands.id`, nullable, indexed | `NULL` means dealership-wide knowledge |
+| `uploaded_by_user_id` | integer | FK → `users.id` | Staff uploader |
+| `filename` | varchar(255) | not null | Sanitized original filename |
+| `media_type` | varchar(100) | not null | Normalized PDF or text media type |
+| `status` | varchar(24) | default `ready` | Only completed ingestion is persisted |
+| `page_count` | integer | nullable | Set for PDFs |
+| `chunk_count` | integer | not null | Number of indexed chunks |
+| `embedding_model` | varchar(255) | not null | Prevents comparing vectors from different providers |
+| `created_at` | timestamptz | not null | Upload time |
+| `processed_at` | timestamptz | not null | Successful indexing time |
+
+### `knowledge_chunks`
+
+Text passages are stored separately so search results can include source and
+page metadata. Chunks are about 1,200 characters with a 160-character overlap.
+
+| Column | Type | Constraints | Notes |
+| --- | --- | --- | --- |
+| `id` | integer | PK | |
+| `document_id` | integer | FK → `knowledge_documents.id`, indexed | Cascades on document deletion |
+| `chunk_index` | integer | not null | Zero-based order within the document |
+| `content` | text | not null | Extracted passage |
+| `embedding` | JSON | not null | Provider vector used for similarity ranking |
+| `page_number` | integer | nullable | Source PDF page; absent for text files |
 
 ### `test_drive_settings`
 
@@ -205,7 +243,8 @@ Index: `uq_test_drive_booking_active_customer` — unique on `(slot_id, customer
 ## Notes and constraints
 
 - `vehicles.brand_id` is nominally nullable in the model but is made `NOT NULL` by the startup migration after backfilling legacy `make` values.
-- Money is stored as a floating-point column (`price`), not a fixed-precision decimal. See [Roadmap & Limitations](roadmap.md).
+- Knowledge documents and chunks are created by `create_all` at startup. The configured embedding model name is stored per document; changing models means old documents must be re-uploaded before they can be searched with the new model.
+- Vehicle money is stored as a fixed-precision `numeric(12,2)` value and handled as `Decimal` in the backend.
 - Refresh tokens and invitation/password-reset tokens are stored as plaintext random strings. Only access tokens are hashed for revocation.
 - The test suite recreates its schema per test, so all constraints above are exercised against real PostgreSQL.
 

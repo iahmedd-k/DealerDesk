@@ -95,13 +95,9 @@ If unconfigured, invitations and reset requests still persist records but email 
 
 | Constraint | Impact |
 | --- | --- |
-| No CORS middleware | Browser clients on another origin cannot call the API directly. |
-| No rate limiting / lockout | Auth endpoints are exposed to brute-force attempts unless protected upstream. |
 | Refresh/reset/invitation tokens stored plaintext | Database read access exposes session/reset secrets. |
-| Money stored as `float` | Precision risk for currency calculations. |
-| No pagination | Large dealerships return full collections. |
 | Startup DDL | Requires schema-alter privileges at runtime. |
-| No health check of dependencies | `/api/v1/health` always returns `ok`; it does not probe the database. |
+| Health check | `/api/v1/health` probes PostgreSQL; external service statuses report configuration, not live connectivity. |
 
 ## Scaling notes
 

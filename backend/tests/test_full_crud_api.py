@@ -136,7 +136,10 @@ def test_dealership_staff_and_vehicle_crud(client, seeded_users) -> None:
         headers=headers,
     ).json()[0]["id"]
 
-    dealership = client.get(f"/api/v1/dealerships/{dealership_id}")
+    dealership = client.get(
+        f"/api/v1/dealerships/{dealership_id}",
+        headers=headers,
+    )
     assert dealership.status_code == 200
     updated_dealership = client.patch(
         f"/api/v1/dealerships/{dealership_id}",
@@ -257,7 +260,8 @@ def test_test_drive_settings_slots_and_customer_booking(client, seeded_users) ->
     assert vehicle.status_code == 201
     assert (
         client.get(
-            f"/api/v1/dealerships/{dealership_id}/test-drive-settings"
+            f"/api/v1/dealerships/{dealership_id}/test-drive-settings",
+            headers=admin_headers,
         ).status_code
         == 200
     )

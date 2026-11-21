@@ -1,7 +1,15 @@
 from datetime import datetime
+from decimal import Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    computed_field,
+    field_validator,
+)
 
 
 STAFF_ROLES = {"dealership_admin", "manager", "sales_rep"}
@@ -43,6 +51,22 @@ class DealershipRegistrationRequest(BaseModel):
             raise ValueError("brand names cannot contain duplicates")
         return cleaned
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "dealership_name": "Apex Motors NYC",
+                "dealership_email": "contact@apexmotors.com",
+                "dealership_phone": "+1-212-555-0199",
+                "dealership_address": "450 W 33rd St, New York, NY 10001",
+                "timezone": "America/New_York",
+                "brands": ["Toyota", "BMW", "Audi"],
+                "admin_name": "Marcus Vance",
+                "admin_email": "marcus@apexmotors.com",
+                "admin_password": "SecurePassword!123",
+            }
+        }
+    )
+
 
 class BrandCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
@@ -54,6 +78,14 @@ class BrandCreateRequest(BaseModel):
         if not value:
             raise ValueError("brand name cannot be blank")
         return value
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "Porsche",
+            }
+        }
+    )
 
 
 class BrandUpdateRequest(BaseModel):
@@ -93,6 +125,16 @@ class StaffInvitationRequest(BaseModel):
             raise ValueError("role must be manager or sales_rep")
         return value
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "Jane Sales",
+                "email": "jane@apexmotors.com",
+                "role": "sales_rep",
+            }
+        }
+    )
+
 
 class StaffInvitationResponse(BaseModel):
     id: int | None = None
@@ -120,9 +162,36 @@ class VehicleCreateRequest(BaseModel):
     model_year: int = Field(ge=1886, le=2200)
     variant: str | None = Field(default=None, max_length=120)
     description: str | None = None
-    price: float = Field(ge=0)
+    price: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
     stock_number: str = Field(min_length=1, max_length=64)
     test_drive_enabled: bool = False
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "brand_id": 1,
+                "model": "Camry",
+                "model_year": 2024,
+                "variant": "XSE V6",
+                "description": "Sport-tuned suspension, panoramic glass roof, 9-inch multimedia display.",
+                "price": 36500.0,
+                "stock_number": "STK-2024-001",
+                "test_drive_enabled": True,
+            }
+        }
+    )
+
+
+class VehicleImageResponse(BaseModel):
+    id: int
+    vehicle_id: int
+    public_url: str
+    media_type: str
+    alt_text: str | None
+    position: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class VehicleResponse(VehicleCreateRequest):
@@ -130,8 +199,15 @@ class VehicleResponse(VehicleCreateRequest):
     dealership_id: int
     make: str
     is_available: bool
+    price: float
+    images: list[VehicleImageResponse] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class VehicleImageUpdateRequest(BaseModel):
+    position: int | None = Field(default=None, ge=0)
+    alt_text: str | None = Field(default=None, max_length=255)
 
 
 class VehicleUpdateRequest(BaseModel):
@@ -140,7 +216,12 @@ class VehicleUpdateRequest(BaseModel):
     model_year: int | None = Field(default=None, ge=1886, le=2200)
     variant: str | None = Field(default=None, max_length=120)
     description: str | None = None
-    price: float | None = Field(default=None, ge=0)
+    price: Decimal | None = Field(
+        default=None,
+        ge=0,
+        max_digits=12,
+        decimal_places=2,
+    )
     stock_number: str | None = Field(default=None, min_length=1, max_length=64)
     is_available: bool | None = None
     test_drive_enabled: bool | None = None
@@ -188,6 +269,63 @@ class TestDriveSlotUpdateRequest(BaseModel):
     is_active: bool
 
 
+class TestDriveBookingRequest(BaseModel):
+    confirmed: bool = Field(
+        default=True,
+        description="Explicit customer confirmation to book the slot",
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "confirmed": True,
+            }
+        }
+    )
+
+
+class TestDriveRescheduleRequest(BaseModel):
+    new_slot_id: int
+    verification_email: str | None = Field(
+        default=None,
+        description="Customer email for contact/identity verification",
+    )
+    verification_phone: str | None = Field(
+        default=None,
+        description="Customer phone for contact/identity verification",
+    )
+    confirmed: bool = Field(
+        default=True,
+        description="Explicit confirmation to reschedule",
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "new_slot_id": 42,
+                "verification_email": "customer@example.com",
+                "confirmed": True,
+            }
+        }
+    )
+
+
+class TestDriveCancellationRequest(BaseModel):
+    verification_email: str | None = Field(
+        default=None,
+        description="Customer email for contact/identity verification",
+    )
+    verification_phone: str | None = Field(
+        default=None,
+        description="Customer phone for contact/identity verification",
+    )
+    reason: str | None = Field(
+        default=None,
+        max_length=255,
+        description="Reason for cancellation",
+    )
+
+
 class TestDriveBookingResponse(BaseModel):
     id: int
     slot_id: int
@@ -225,6 +363,18 @@ class TestDriveSettingsRequest(BaseModel):
             raise ValueError("days_open cannot contain duplicates")
         return sorted(value)
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "opening_time": "09:00",
+                "closing_time": "18:00",
+                "slot_duration_minutes": 30,
+                "capacity_per_slot": 2,
+                "days_open": [0, 1, 2, 3, 4, 5],
+            }
+        }
+    )
+
 
 class TestDriveSettingsResponse(TestDriveSettingsRequest):
     id: int
@@ -248,5 +398,15 @@ class TestDriveSlotResponse(BaseModel):
     capacity: int
     booked_count: int
     is_active: bool
+
+    @computed_field
+    @property
+    def remaining_capacity(self) -> int:
+        return max(0, self.capacity - self.booked_count)
+
+    @computed_field
+    @property
+    def is_available(self) -> bool:
+        return self.is_active and (self.capacity - self.booked_count) > 0
 
     model_config = ConfigDict(from_attributes=True)

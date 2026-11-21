@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
+from app.core.authorization import ensure_dealership_access
 from app.db.session import get_db
 from app.dependencies.auth import get_current_user
+from app.dependencies.workspace import require_dealerdesk_admin
 from app.models.user import User
 from app.models.workspace import Dealership
 from app.schemas.user import UserResponse
@@ -17,13 +19,26 @@ from app.services import dealership_service
 router = APIRouter(prefix="/dealerships", tags=["Dealerships"])
 
 
+@router.get("/public", response_model=list[DealershipResponse])
+def list_public_dealerships(db: Session = Depends(get_db)) -> list[Dealership]:
+    return dealership_service.list_active_dealerships(db)
+
+
 @router.get("", response_model=list[DealershipResponse])
-def list_dealerships(db: Session = Depends(get_db)) -> list[Dealership]:
+def list_dealerships(
+    current_user: User = Depends(require_dealerdesk_admin),
+    db: Session = Depends(get_db),
+) -> list[Dealership]:
     return dealership_service.list_active_dealerships(db)
 
 
 @router.get("/{dealership_id}", response_model=DealershipResponse)
-def get_dealership(dealership_id: int, db: Session = Depends(get_db)) -> Dealership:
+def get_dealership(
+    dealership_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Dealership:
+    ensure_dealership_access(current_user, dealership_id)
     return dealership_service.get_active_dealership(db, dealership_id)
 
 

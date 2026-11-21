@@ -5,79 +5,71 @@ This document separates what is implemented from what is planned or missing, and
 ## Implemented
 
 - JWT authentication with rotating refresh tokens, logout revocation, and global token invalidation.
+- Platform superadmin role (`dealerdesk_admin`) with cross-dealership management, user listing, and tenant oversight.
 - Customer self-registration and profile management.
 - Password reset and staff invitation activation flows.
 - Dealership registration (dealership + brands + admin + settings in one transaction).
 - Dealership profile updates and soft deactivation.
 - Brand CRUD with case-insensitive uniqueness, 20-brand limit, archive/restore, and logo upload.
 - Vehicle inventory with brand validation, availability toggle, and soft deletion.
+- Multi-image vehicle media management backed by Supabase Storage, including validation, display ordering, alt text, and deletion.
 - Staff invitations, role management, revocation, and last-admin protection.
 - Test-drive settings, timezone/DST-aware slot generation, reconciliation, and per-slot capacity.
-- Customer booking/cancellation with duplicate and capacity protection.
-- Role-based and dealership-scoped authorization.
+- Test-drive availability queries with `available_only`, `vehicle_id`, and date range filters, with real-time `remaining_capacity` and `is_available` computed fields (FR-016).
+- Customer test-drive booking with explicit confirmation, row-level locks, atomic capacity decrement, and duplicate/overlap prevention (FR-017).
+- Booking management (FR-018): Staff can view all dealership bookings, reschedule, and cancel; customer-facing rescheduling and cancellation enforces contact and identity verification.
+- CORS middleware with configurable allowed origins (`CORS_ORIGINS`).
+- Role-based and dealership-scoped authorization across all CRUD endpoints.
 - Optional Resend email and Supabase Storage integrations.
 - Startup schema provisioning and legacy vehicle/brand backfill.
 - Integration and unit test suite against PostgreSQL.
-- Idempotent demo seeding.
+- Idempotent demo seeding for all roles (`dealerdesk@demo.com`, `dealership@demo.com`, `customer@demo.com`).
+- Alembic database migration management with versioned revisions, `alembic.ini`, schema downgrade support, and programmatic startup upgrades.
+- Dealership knowledge document ingestion for PDF, TXT, and Markdown, with optional brand scoping.
+- Chunk indexing, configurable embeddings, source-aware retrieval, and document deletion.
+- Dealership-grounded AI Assistant (`POST /api/v1/dealerships/{dealership_id}/assistant/chat`) with intent detection, live inventory grounding, test-drive slot lookup, RAG semantic knowledge chunk retrieval, and remote OpenAI provider with fallback local heuristic engine.
+- Pagination, filtering, and sorting across collection endpoints with standard `X-Total-Count`, `X-Page`, `X-Page-Size`, and `X-Total-Pages` response headers.
+- Standard structured error envelope (`detail`, `error_code`, `request_id`, `timestamp`) across all API errors.
+- Idempotency middleware caching 200/201 responses with 24-hour TTL and `Idempotent-Replayed: true` header for retry-safe writes.
+- Structured request logging and correlation ID propagation (`X-Request-ID` header and context).
+- Deep operational health check (`/api/v1/health`) probing PostgreSQL connectivity, query latency, and external service dependency status.
+- Audit logging system tracking actor, dealership, action, resource, timestamp, and client IP (`audit_logs` table & API).
+- Configurable rate limiting on auth endpoints via `slowapi` (`AUTH_RATE_LIMIT`).
+- Multi-stage production `backend/Dockerfile`, `docker-compose.yml`, and GitHub Actions CI workflow (`.github/workflows/ci.yml`).
+- Next.js 15 frontend foundation initialized in `frontend/`.
 
 ## Not implemented (observed gaps)
 
 ### Frontend
-- `frontend/` contains only `node_modules`; there is no application source, framework config, or UI.
-- No TypeScript components, API client layer, or state management.
-
-### Migration management
-- No Alembic revisions or `alembic.ini` workflow are present, despite `alembic` being listed in `requirements.txt`.
-- Schema changes rely on `create_all` and hand-written idempotent SQL in `app/db/migrations.py`, executed at startup.
-- No downgrade path or migration history.
-
-### API platform features
-- No pagination, filtering, or sorting on collection endpoints.
-- No standard response envelope or error codes beyond `detail`.
-- No API versioning beyond the `/api/v1` prefix.
-- No OpenAPI examples on most endpoints (auth schemas have some).
-- No idempotency keys for retried writes.
+- Next.js application foundation configured; UI pages, components, and dashboard interfaces are under development.
+- Needs complete API client layer and state management.
 
 ### Security and operations
-- No CORS configuration; browser clients on other origins are blocked.
-- No rate limiting, brute-force protection, or account lockout.
-- No email verification.
-- Refresh tokens, password-reset tokens, and invitation tokens are stored in plaintext.
-- No audit log.
-- No structured request logging or correlation IDs.
-- `/api/v1/health` does not check database or external dependencies.
-- No container image, CI pipeline, or infrastructure-as-code in the repository.
+- Email verification flow (tokens currently expire and verify upon redemption).
+- Account lockout after consecutive failed attempts.
 
 ### Domain features
-- No vehicle image management or media pipeline (only brand logos).
 - No sales leads, deals, or customer CRM beyond accounts.
 - No staff availability or per-salesperson scheduling.
 - No notifications/reminders for bookings.
 - No support for multiple locations per dealership.
 - No reporting or analytics endpoints.
-- No pagination for staff, users, or bookings.
+- No OCR for scanned/rasterized PDFs in knowledge ingestion.
 
 ### Code quality
-- Repository pattern is only partially applied; several endpoints contain direct ORM queries.
-- Some domain logic (e.g., slot reconciliation, brand lifecycle) lives in endpoint modules rather than services.
-- `price` uses a floating-point column instead of a fixed-precision decimal.
-- `print` is used for the startup banner instead of structured logging (despite the repository rule).
-- Duplicated access-check helpers (`_ensure_dealership_access`, `_get_active_dealership`) exist in multiple endpoint modules and could be centralized.
+- Vehicle prices use fixed-precision storage; health database checks use repository/service layers.
+- Startup status uses structured logging, and repeated dealership/role access checks use shared helpers.
+- Slot reconciliation and brand lifecycle logic live in domain services.
 
 ## Suggested next steps
 
 Prioritized by impact and risk:
 
-1. **Add CORS and rate limiting** before any browser frontend or public exposure.
-2. **Adopt a real migration workflow** (Alembic) for reviewable, reversible schema changes.
-3. **Harden token storage** — hash refresh/reset/invitation tokens at rest.
-4. **Add pagination and filtering** to collection endpoints.
-5. **Extract remaining SQL into repositories/services** to match the stated architecture.
-6. **Switch monetary values to `Numeric`/`Decimal`**.
-7. **Add health checks** for database and external services.
-8. **Add audit logging and request tracing**.
-9. **Build the frontend** on top of the documented API.
-10. **Add CI** running Ruff and the PostgreSQL-backed test suite.
+1. **Harden token storage** — hash refresh/reset/invitation tokens at rest.
+2. **Extract remaining SQL into repositories/services** to match the stated architecture.
+3. **Add audit logging and request tracing**.
+4. **Build out the frontend** on top of the documented API.
+5. **Add CI** running Ruff and the PostgreSQL-backed test suite.
 
 ## Risk register
 

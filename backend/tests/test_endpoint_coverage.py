@@ -8,6 +8,8 @@ from app.models.workspace import StaffInvitation
 from seed.demo_credentials import (
     CUSTOMER_DEMO_EMAIL,
     CUSTOMER_DEMO_PASSWORD,
+    DEALERDESK_ADMIN_DEMO_EMAIL,
+    DEALERDESK_ADMIN_DEMO_PASSWORD,
     DEALERSHIP_DEMO_EMAIL,
     DEALERSHIP_DEMO_PASSWORD,
 )
@@ -37,8 +39,14 @@ def test_every_api_route_has_a_workflow(client, db, seeded_users, monkeypatch) -
     customer_token = customer_login["access_token"]
     admin_login = _login(client, DEALERSHIP_DEMO_EMAIL, DEALERSHIP_DEMO_PASSWORD)
     admin_token = admin_login["access_token"]
+    dealerdesk_login = _login(
+        client,
+        DEALERDESK_ADMIN_DEMO_EMAIL,
+        DEALERDESK_ADMIN_DEMO_PASSWORD,
+    )
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
     customer_headers = {"Authorization": f"Bearer {customer_token}"}
+    dealerdesk_headers = {"Authorization": f"Bearer {dealerdesk_login['access_token']}"}
     dealership_id = seeded_users[1].dealership_id
 
     signup = client.post(
@@ -139,8 +147,10 @@ def test_every_api_route_has_a_workflow(client, db, seeded_users, monkeypatch) -
     assert second_refresh.status_code == 200
     current_refresh_token = second_refresh.json()["refresh_token"]
 
-    assert client.get("/api/v1/dealerships").status_code == 200
-    assert client.get(f"/api/v1/dealerships/{dealership_id}").status_code == 200
+    assert client.get("/api/v1/dealerships", headers=dealerdesk_headers).status_code == 200
+    assert client.get("/api/v1/dealerships", headers=customer_headers).status_code == 403
+    assert client.get(f"/api/v1/dealerships/{dealership_id}", headers=admin_headers).status_code == 200
+    assert client.get(f"/api/v1/dealerships/{dealership_id}", headers=customer_headers).status_code == 404
     invalid_timezone_registration = client.post(
         "/api/v1/dealerships/register",
         json={
@@ -381,9 +391,17 @@ def test_every_api_route_has_a_workflow(client, db, seeded_users, monkeypatch) -
 
     assert (
         client.get(
-            f"/api/v1/dealerships/{dealership_id}/test-drive-settings"
+            f"/api/v1/dealerships/{dealership_id}/test-drive-settings",
+            headers=admin_headers,
         ).status_code
         == 200
+    )
+    assert (
+        client.get(
+            f"/api/v1/dealerships/{dealership_id}/test-drive-settings",
+            headers=customer_headers,
+        ).status_code
+        == 403
     )
     assert (
         client.patch(

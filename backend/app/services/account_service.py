@@ -15,6 +15,7 @@ from app.core.errors import (
 )
 from app.core.roles import (
     CUSTOMER_ROLE,
+    DEALERDESK_ADMIN_ROLE,
     DEALERSHIP_ADMIN_ROLE,
 )
 from app.models.user import (
@@ -118,6 +119,8 @@ def logout(
 def list_users(db: Session, current_user: User) -> list[User]:
     ensure_dealership_admin(current_user)
     if current_user.dealership_id is None:
+        if current_user.role == DEALERDESK_ADMIN_ROLE:
+            return user_repository.list_all(db)
         return []
     return user_repository.list_for_dealership(db, current_user.dealership_id)
 

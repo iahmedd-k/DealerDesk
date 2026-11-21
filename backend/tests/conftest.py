@@ -36,12 +36,25 @@ def _reset_test_schema() -> None:
         "postgresql+psycopg://", "postgresql://", 1
     )
     with psycopg.connect(database_url, autocommit=True) as connection:
+        connection.execute(
+            """
+            SELECT pg_terminate_backend(pid)
+            FROM pg_stat_activity
+            WHERE datname = current_database()
+              AND state = 'idle in transaction'
+              AND pid <> pg_backend_pid();
+            """
+        )
         connection.execute(f'DROP SCHEMA IF EXISTS "{test_schema}" CASCADE')
         connection.execute(f'CREATE SCHEMA "{test_schema}"')
+    engine.dispose()
 
 
 @pytest.fixture(autouse=True)
-def reset_database() -> Iterator[None]:
+def reset_database(request: pytest.FixtureRequest) -> Iterator[None]:
+    if "no_db" in request.keywords:
+        yield
+        return
     _reset_test_schema()
     Base.metadata.create_all(bind=engine)
     yield
@@ -64,7 +77,7 @@ def client() -> Iterator[TestClient]:
 
 
 @pytest.fixture
-def seeded_users() -> tuple[User, User]:
+def seeded_users() -> tuple[User, User, User]:
     from seed.seed_demo_user import seed_demo_users
 
     return seed_demo_users()

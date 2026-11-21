@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import AliasChoices, Field, SecretStr
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -63,6 +63,13 @@ class Settings(BaseSettings):
         default="brand-logos",
         validation_alias=AliasChoices("SUPABASE_BUCKET_ID", "supabase_bucket_id"),
     )
+    vehicle_images_bucket_id: str = Field(
+        default="vehicle-images",
+        validation_alias=AliasChoices(
+            "VEHICLE_IMAGES_BUCKET_ID",
+            "vehicle_images_bucket_id",
+        ),
+    )
     resend_api_key: SecretStr | None = Field(
         default=None,
         validation_alias=AliasChoices("resend_api_key", "RESEND_API_KEY"),
@@ -75,6 +82,73 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("RESEND_REPLY_TO", "resend_reply_to"),
     )
+    cors_origins: list[str] = Field(
+        default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"],
+        validation_alias=AliasChoices("CORS_ORIGINS", "cors_origins"),
+    )
+    auth_rate_limit: str = Field(
+        default="10/minute",
+        validation_alias=AliasChoices("AUTH_RATE_LIMIT", "auth_rate_limit"),
+    )
+    embedding_api_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("EMBEDDING_API_URL", "embedding_api_url"),
+    )
+    embedding_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "EMBEDDING_API_KEY",
+            "embedding_api_key",
+        ),
+    )
+    embedding_model: str = Field(
+        default="text-embedding-3-small",
+        validation_alias=AliasChoices("EMBEDDING_MODEL", "embedding_model"),
+    )
+    llm_api_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("LLM_API_URL", "llm_api_url"),
+    )
+    llm_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("LLM_API_KEY", "llm_api_key"),
+    )
+    llm_model: str = Field(
+        default="gpt-4o-mini",
+        validation_alias=AliasChoices("LLM_MODEL", "llm_model"),
+    )
+    llm_provider: str = Field(
+        default="auto",
+        validation_alias=AliasChoices("LLM_PROVIDER", "llm_provider"),
+    )
+    dealerdesk_admin_name: str = Field(
+        default="DealerDesk Admin",
+        validation_alias=AliasChoices(
+            "DEALERDESK_ADMIN_NAME",
+            "dealerdesk_admin_name",
+        ),
+    )
+    dealerdesk_admin_email: str = Field(
+        default="dealerdesk@demo.com",
+        validation_alias=AliasChoices(
+            "DEALERDESK_ADMIN_EMAIL",
+            "dealerdesk_admin_email",
+        ),
+    )
+    dealerdesk_admin_password: SecretStr = Field(
+        default=SecretStr("adminadmin"),
+        validation_alias=AliasChoices(
+            "DEALERDESK_ADMIN_PASSWORD",
+            "dealerdesk_admin_password",
+        ),
+    )
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
 
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env",

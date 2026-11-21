@@ -520,17 +520,18 @@ Current code locations:
 | Capability | Current repository | Target described by requirements |
 | --- | --- | --- |
 | FastAPI app and versioned API | Implemented | Keep as API foundation |
-| SQLite default database | Implemented for local development | PostgreSQL + migrations + pgvector |
-| User signup/login/logout/me | Implemented | Customer role is default; workspace users carry dealership and role |
-| Dealership and staff management | Initial phase implemented | Add full permissions, email provider delivery, and control-center UI |
-| Vehicles and test-drive setup | Initial phase implemented | Add catalog hierarchy, inventory history, and booking transactions |
-| Brands, models, variants, inventory | Not implemented | Add catalog hierarchy and inventory status history around the vehicle foundation |
-| Website chat and conversations | Not implemented | Add channel adapters, messages, continuity, and consent |
-| Knowledge ingestion and retrieval | Not implemented | Add document versions, chunks, embeddings, and scoped retrieval |
-| Agent routing and tools | Not implemented | Add router, brand agents, and narrow authorized tools |
-| Leads and bookings | Not implemented | Add transactional workflows and idempotency |
-| n8n events and workflows | Not implemented | Add signed outbox events, retries, and workflow status |
-| Staff control center and analytics | Not implemented | Add inbox, CRM, agent/knowledge management, and reporting |
+| PostgreSQL database (Supabase/local) | Implemented | PostgreSQL + startup migrations + transaction pooler |
+| User signup/login/logout/me & RBAC | Implemented | `dealerdesk_admin`, `dealership_admin`, `manager`, `sales_rep`, and `customer` |
+| Dealership and staff management | Implemented | Workspace lifecycle, staff invitations, role revocation, last-admin guard |
+| Brands and vehicle inventory | Implemented | Multi-brand support (up to 20), vehicle inventory CRUD, test-drive flags |
+| Knowledge ingestion and retrieval | Implemented | PDF/text extraction, chunking, OpenAI-compatible or local embeddings, search |
+| Test-drive slots and availability | Implemented | Timezone/DST slot generation, capacity tracking, remaining capacity, query filters |
+| Test-drive bookings & management | Implemented | Concurrency locking, duplicate prevention, staff view/reschedule/cancel, customer verification |
+| Website chat and conversations | Planned | Add channel adapters, messages, continuity, and consent |
+| Agent routing and tools | Planned | Add router, brand agents, and narrow authorized tools |
+| Leads management | Planned | Add lead capture, manual/round-robin assignment, and status lifecycle |
+| n8n events and workflows | Planned | Add signed outbox events, retries, and workflow status |
+| Staff control center and analytics | Planned | Add inbox, CRM, agent/knowledge management, and reporting |
 
 ### Initial workspace API
 

@@ -1,19 +1,56 @@
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    JSON,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
     text,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+
+
+class KnowledgeDocument(Base):
+    __tablename__ = "knowledge_documents"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    dealership_id: Mapped[int] = mapped_column(
+        ForeignKey("dealerships.id", ondelete="CASCADE"), index=True
+    )
+    brand_id: Mapped[int | None] = mapped_column(
+        ForeignKey("brands.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    uploaded_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    filename: Mapped[str] = mapped_column(String(255))
+    media_type: Mapped[str] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(24), default="ready")
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    chunk_count: Mapped[int] = mapped_column(Integer)
+    embedding_model: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class KnowledgeChunk(Base):
+    __tablename__ = "knowledge_chunks"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("knowledge_documents.id", ondelete="CASCADE"), index=True
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer)
+    content: Mapped[str] = mapped_column(Text)
+    embedding: Mapped[list[float]] = mapped_column(JSON)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class Dealership(Base):
@@ -89,10 +126,43 @@ class Vehicle(Base):
     model_year: Mapped[int] = mapped_column(Integer)
     variant: Mapped[str | None] = mapped_column(String(120), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    price: Mapped[float] = mapped_column()
+    price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     stock_number: Mapped[str] = mapped_column(String(64))
     is_available: Mapped[bool] = mapped_column(Boolean, default=True)
     test_drive_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    images: Mapped[list["VehicleImage"]] = relationship(
+        back_populates="vehicle",
+        order_by="VehicleImage.position",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
+
+
+class VehicleImage(Base):
+    __tablename__ = "vehicle_images"
+    __table_args__ = (
+        UniqueConstraint(
+            "storage_path",
+            name="uq_vehicle_images_storage_path",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    dealership_id: Mapped[int] = mapped_column(
+        ForeignKey("dealerships.id", ondelete="CASCADE"), index=True
+    )
+    vehicle_id: Mapped[int] = mapped_column(
+        ForeignKey("vehicles.id", ondelete="CASCADE"), index=True
+    )
+    uploaded_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    storage_path: Mapped[str] = mapped_column(String(512))
+    public_url: Mapped[str] = mapped_column(String(1024))
+    media_type: Mapped[str] = mapped_column(String(32))
+    alt_text: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    position: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    vehicle: Mapped[Vehicle] = relationship(back_populates="images")
 
 
 class TestDriveSettings(Base):
