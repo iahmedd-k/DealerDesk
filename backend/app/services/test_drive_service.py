@@ -302,6 +302,13 @@ def book_slot(
         raise ConflictError("Test-drive slot is in the past")
     if slot.booked_count >= slot.capacity:
         raise ConflictError("Test-drive slot is full")
+    from app.services import slot_hold_service
+    if payload is not None and payload.hold_token:
+        slot_hold_service.confirm_slot_hold(db, payload.hold_token)
+    else:
+        active_holds = slot_hold_service.get_active_holds_count_for_slot(db, slot.id)
+        if (slot.booked_count + active_holds) >= slot.capacity:
+            raise ConflictError("Test-drive slot is currently reserved")
     vehicle = test_drive_repository.get_vehicle(db, slot.vehicle_id)
     brand = (
         test_drive_repository.get_brand(db, vehicle.brand_id)

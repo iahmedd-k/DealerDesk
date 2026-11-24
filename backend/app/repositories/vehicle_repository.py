@@ -3,7 +3,7 @@ from decimal import Decimal
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models.workspace import Brand, Vehicle
+from app.models.workspace import Brand, Vehicle, VehicleStatusHistory
 
 
 def list_for_dealership(
@@ -14,6 +14,7 @@ def list_for_dealership(
     brand_id: int | None = None,
     min_price: Decimal | None = None,
     max_price: Decimal | None = None,
+    status: str | None = None,
     is_available: bool | None = None,
     test_drive_enabled: bool | None = None,
     search: str | None = None,
@@ -34,6 +35,8 @@ def list_for_dealership(
         query = query.where(Vehicle.price >= min_price)
     if max_price is not None:
         query = query.where(Vehicle.price <= max_price)
+    if status is not None:
+        query = query.where(Vehicle.status == status)
     if is_available is not None:
         query = query.where(Vehicle.is_available == is_available)
     if test_drive_enabled is not None:
@@ -79,6 +82,7 @@ def count_for_dealership(
     brand_id: int | None = None,
     min_price: Decimal | None = None,
     max_price: Decimal | None = None,
+    status: str | None = None,
     is_available: bool | None = None,
     test_drive_enabled: bool | None = None,
     search: str | None = None,
@@ -95,6 +99,8 @@ def count_for_dealership(
         query = query.where(Vehicle.price >= min_price)
     if max_price is not None:
         query = query.where(Vehicle.price <= max_price)
+    if status is not None:
+        query = query.where(Vehicle.status == status)
     if is_available is not None:
         query = query.where(Vehicle.is_available == is_available)
     if test_drive_enabled is not None:
@@ -149,3 +155,29 @@ def save(db: Session, vehicle: Vehicle) -> Vehicle:
     db.commit()
     db.refresh(vehicle)
     return vehicle
+
+
+def save_status_history(
+    db: Session,
+    history: VehicleStatusHistory,
+) -> VehicleStatusHistory:
+    db.add(history)
+    db.commit()
+    db.refresh(history)
+    return history
+
+
+def list_status_history_for_vehicle(
+    db: Session,
+    dealership_id: int,
+    vehicle_id: int,
+) -> list[VehicleStatusHistory]:
+    stmt = (
+        select(VehicleStatusHistory)
+        .where(
+            VehicleStatusHistory.dealership_id == dealership_id,
+            VehicleStatusHistory.vehicle_id == vehicle_id,
+        )
+        .order_by(VehicleStatusHistory.created_at.desc(), VehicleStatusHistory.id.desc())
+    )
+    return list(db.scalars(stmt))

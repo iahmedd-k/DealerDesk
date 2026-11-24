@@ -34,3 +34,6 @@ ruff
 
 # Supabase
 supabase
+
+# Telephony & Multi-Channel
+twilio

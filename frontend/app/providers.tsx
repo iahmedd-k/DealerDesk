@@ -48,16 +48,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     async function restoreSession() {
       const storedToken = localStorage.getItem("dealerdesk_access");
       const storedDealership = localStorage.getItem("dealerdesk_active_dealership");
-      if (!storedToken) {
-        setAuthReady(true);
-        return;
-      }
 
-      setAccessToken(storedToken);
       try {
-        const restoredUser = await api<User>("/auth/me", {}, storedToken);
+        const restoredUser = await api<User>("/auth/me", {}, storedToken || null);
         if (cancelled) return;
         setUser(restoredUser);
+        if (storedToken) setAccessToken(storedToken);
         const storedId = Number(storedDealership);
         setActiveDealershipId(
           restoredUser.dealership_id ??
@@ -71,9 +67,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         localStorage.removeItem("dealerdesk_active_dealership");
         setAccessToken(null);
         setUser(null);
-        if (!(error instanceof ApiError && error.statusCode === 401)) {
-          console.error("Could not restore the DealerDesk session.", error);
-        }
       } finally {
         if (!cancelled) setAuthReady(true);
       }
@@ -108,22 +101,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function logout() {
-    if (accessToken) {
-      try {
-        await api<void>(
-          "/auth/logout",
-          {
-          method: "POST",
-          },
-          accessToken,
-        );
-      } catch (error) {
-        console.error("The server could not revoke the current session.", error);
-      }
+    try {
+      await api<void>("/auth/logout", { method: "POST" }, accessToken);
+    } catch (error) {
+      console.error("The server could not revoke the current session.", error);
     }
     localStorage.removeItem("dealerdesk_access");
     localStorage.removeItem("dealerdesk_refresh");
     localStorage.removeItem("dealerdesk_user");
+    localStorage.removeItem("dealerdesk_active_dealership");
     setAccessToken(null);
     setUser(null);
     setActiveDealershipId(0);

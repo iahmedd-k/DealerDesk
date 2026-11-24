@@ -9,6 +9,11 @@ from app.api.v1.router import router as api_router
 from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
 from app.core.limiter import limiter
+from app.db.migrations import (
+    ensure_channel_and_hold_tables,
+    ensure_security_and_idempotency_tables,
+    ensure_vehicle_lifecycle_and_audit_columns,
+)
 from app.db.session import engine
 from app.middleware.idempotency import IdempotencyMiddleware
 from app.middleware.logging import CorrelationIdMiddleware
@@ -19,6 +24,12 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    try:
+        ensure_security_and_idempotency_tables(engine)
+        ensure_channel_and_hold_tables(engine)
+        ensure_vehicle_lifecycle_and_audit_columns(engine)
+    except Exception as exc:
+        logger.warning("Startup schema verification notice: %s", exc)
     logger.info("DealerDesk backend server started successfully")
     try:
         yield
@@ -61,6 +72,7 @@ app.state.limiter = limiter
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
+    allow_origin_regex=settings.cors_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -73,6 +85,20 @@ register_exception_handlers(app)
 
 # API Routers
 app.include_router(api_router)
+
+# Also expose direct channel route aliases for webhook convenience
+from app.channels.vapi.router import router as direct_vapi_router
+from app.channels.whatsapp.router import router as direct_whatsapp_router
+app.include_router(
+    direct_whatsapp_router,
+    prefix="/channels/whatsapp",
+    tags=["WhatsApp Channel"],
+)
+app.include_router(
+    direct_vapi_router,
+    prefix="/channels/vapi",
+    tags=["Vapi Voice Channel"],
+)
 
 
 @app.get(

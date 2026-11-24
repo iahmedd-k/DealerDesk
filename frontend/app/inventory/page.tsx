@@ -17,11 +17,31 @@ import {
   Tag,
   ChevronRight,
   Sparkles,
+  Clock,
+  History,
+  ArrowRight,
 } from "lucide-react";
 import Shell from "../components/Shell";
 import { useAuth } from "../providers";
 import { api } from "../api";
-import type { Vehicle, VehicleImage, Brand } from "../lib/types";
+import type { Vehicle, VehicleImage, Brand, VehicleStatusHistory } from "../lib/types";
+
+function getStatusBadge(status?: string, isAvailable?: boolean) {
+  const s = status || (isAvailable ? "available" : "unavailable");
+  switch (s) {
+    case "available":
+      return { label: "Available", className: "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" };
+    case "reserved":
+      return { label: "Reserved", className: "bg-amber-500/20 text-amber-300 border border-amber-500/30" };
+    case "sold":
+      return { label: "Sold", className: "bg-purple-500/20 text-purple-300 border border-purple-500/30" };
+    case "in_transit":
+      return { label: "In Transit", className: "bg-blue-500/20 text-blue-300 border border-blue-500/30" };
+    case "unavailable":
+    default:
+      return { label: "Unavailable", className: "bg-slate-500/20 text-slate-300 border border-slate-500/30" };
+  }
+}
 
 export default function InventoryPage() {
   const { user, activeDealershipId } = useAuth();
@@ -31,12 +51,17 @@ export default function InventoryPage() {
   const [error, setError] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedBrand, setSelectedBrand] = useState<number | "all">("all");
-  const [availabilityFilter, setAvailabilityFilter] = useState<"all" | "available" | "unavailable">("all");
+  const [availabilityFilter, setAvailabilityFilter] = useState<"all" | "available" | "reserved" | "sold" | "in_transit" | "unavailable">("all");
   const [viewMode, setViewMode] = useState<"table" | "grid">("table");
 
   // Modal states
   const [showAddModal, setShowAddModal] = useState(false);
   const [inspectVehicle, setInspectVehicle] = useState<Vehicle | null>(null);
+  const [statusHistory, setStatusHistory] = useState<VehicleStatusHistory[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [transitionStatus, setTransitionStatus] = useState<string>("available");
+  const [transitionNotes, setTransitionNotes] = useState("");
+  const [transitionBusy, setTransitionBusy] = useState(false);
   const [imageBusy, setImageBusy] = useState(false);
   const [imageFile, setImageFile] = useState<File | null>(null);
 
@@ -116,13 +141,61 @@ export default function InventoryPage() {
       (v.variant && v.variant.toLowerCase().includes(searchTerm.toLowerCase()));
 
     const matchesBrand = selectedBrand === "all" || v.brand_id === selectedBrand;
+    const effectiveStatus = v.status || (v.is_available ? "available" : "unavailable");
     const matchesAvailability =
-      availabilityFilter === "all" ||
-      (availabilityFilter === "available" && v.is_available) ||
-      (availabilityFilter === "unavailable" && !v.is_available);
+      availabilityFilter === "all" || effectiveStatus === availabilityFilter;
 
     return matchesSearch && matchesBrand && matchesAvailability;
   });
+
+  async function openInspectVehicle(vehicle: Vehicle) {
+    setInspectVehicle(vehicle);
+    setTransitionStatus(vehicle.status || (vehicle.is_available ? "available" : "unavailable"));
+    setTransitionNotes("");
+    if (activeDealershipId) {
+      setLoadingHistory(true);
+      try {
+        const history = await api<VehicleStatusHistory[]>(
+          `/dealerships/${activeDealershipId}/vehicles/${vehicle.id}/history`
+        );
+        setStatusHistory(history);
+      } catch {
+        setStatusHistory([]);
+      } finally {
+        setLoadingHistory(false);
+      }
+    }
+  }
+
+  async function handleStatusTransition(e: React.FormEvent) {
+    e.preventDefault();
+    if (!activeDealershipId || !inspectVehicle) return;
+    setTransitionBusy(true);
+    setError("");
+    try {
+      const updated = await api<Vehicle>(
+        `/dealerships/${activeDealershipId}/vehicles/${inspectVehicle.id}/status`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            status: transitionStatus,
+            notes: transitionNotes.trim() || undefined,
+          }),
+        }
+      );
+      setVehicles((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setInspectVehicle(updated);
+      const history = await api<VehicleStatusHistory[]>(
+        `/dealerships/${activeDealershipId}/vehicles/${inspectVehicle.id}/history`
+      );
+      setStatusHistory(history);
+      setTransitionNotes("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update vehicle status.");
+    } finally {
+      setTransitionBusy(false);
+    }
+  }
 
   async function handleCreateVehicle(e: React.FormEvent) {
     e.preventDefault();
@@ -358,8 +431,11 @@ export default function InventoryPage() {
               className="bg-slate-950 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 outline-none"
             >
               <option value="all">All Statuses</option>
-              <option value="available">Available Only</option>
-              <option value="unavailable">Reserved / Unavailable</option>
+              <option value="available">Available</option>
+              <option value="reserved">Reserved</option>
+              <option value="sold">Sold</option>
+              <option value="in_transit">In Transit</option>
+              <option value="unavailable">Unavailable</option>
             </select>
           </div>
         </div>
@@ -376,7 +452,7 @@ export default function InventoryPage() {
                 <th>Year</th>
                 <th>Stock Number</th>
                 <th>Price</th>
-                <th>Availability</th>
+                <th>Lifecycle Status</th>
                 <th>Test Drive</th>
                 <th>Actions</th>
               </tr>
@@ -415,13 +491,13 @@ export default function InventoryPage() {
                   <td className="font-bold text-white">${Number(v.price).toLocaleString()}</td>
                   <td>
                     <button
-                      onClick={() => isStaff && toggleAvailability(v)}
-                      disabled={!isStaff}
-                      className={`badge cursor-pointer ${
-                        v.is_available ? "badge-success" : "badge-neutral"
+                      onClick={() => openInspectVehicle(v)}
+                      className={`badge px-2.5 py-0.5 rounded text-xs font-semibold cursor-pointer ${
+                        getStatusBadge(v.status, v.is_available).className
                       }`}
+                      title="Click to view details & manage lifecycle status"
                     >
-                      {v.is_available ? "In Stock" : "Reserved"}
+                      {getStatusBadge(v.status, v.is_available).label}
                     </button>
                   </td>
                   <td>
@@ -438,7 +514,7 @@ export default function InventoryPage() {
                   <td>
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => setInspectVehicle(v)}
+                        onClick={() => openInspectVehicle(v)}
                         className="text-xs text-slate-300 hover:text-white p-1 rounded bg-slate-800"
                         title="View Details"
                       >
@@ -489,9 +565,11 @@ export default function InventoryPage() {
                     {v.make}
                   </span>
                   <span
-                    className={`badge ${v.is_available ? "badge-success" : "badge-danger"} bg-slate-900/80 backdrop-blur-md`}
+                    className={`badge px-2 py-0.5 rounded text-xs font-semibold bg-slate-900/90 backdrop-blur-md ${
+                      getStatusBadge(v.status, v.is_available).className
+                    }`}
                   >
-                    {v.is_available ? "In Stock" : "Unavailable"}
+                    {getStatusBadge(v.status, v.is_available).label}
                   </span>
                 </div>
                 <div className="absolute bottom-3 right-3 bg-slate-900/90 backdrop-blur-md px-2.5 py-1 rounded text-xs font-bold text-white">
@@ -516,7 +594,7 @@ export default function InventoryPage() {
                   <span className="font-mono text-slate-400 text-[11px]">{v.stock_number}</span>
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => setInspectVehicle(v)}
+                      onClick={() => openInspectVehicle(v)}
                       className="text-xs text-slate-300 hover:text-white"
                     >
                       Details
@@ -655,9 +733,111 @@ export default function InventoryPage() {
                   <p className="font-semibold text-slate-200">{inspectVehicle.test_drive_enabled ? "Yes" : "No"}</p>
                 </div>
                 <div>
-                  <span className="text-slate-400">Fleet Availability:</span>
-                  <p className="font-semibold text-emerald-400">{inspectVehicle.is_available ? "In Stock" : "Unavailable"}</p>
+                  <span className="text-slate-400">Lifecycle Status:</span>
+                  <div className="mt-1">
+                    <span className={`badge px-2.5 py-0.5 rounded text-xs font-semibold ${getStatusBadge(inspectVehicle.status, inspectVehicle.is_available).className}`}>
+                      {getStatusBadge(inspectVehicle.status, inspectVehicle.is_available).label}
+                    </span>
+                  </div>
                 </div>
+              </div>
+
+              {/* Status Transition Control (Staff Only) */}
+              {isStaff && (
+                <div className="rounded-lg border border-slate-800 bg-slate-950 p-3.5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Layers className="h-4 w-4 text-blue-400" />
+                      <span className="font-semibold text-white text-xs">Update Status Transition</span>
+                    </div>
+                    <span className="text-[10px] text-slate-400">Syncs fleet state & records audit log</span>
+                  </div>
+                  <form onSubmit={handleStatusTransition} className="space-y-2.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[11px] text-slate-400 block mb-1">New Status</label>
+                        <select
+                          value={transitionStatus}
+                          onChange={(e) => setTransitionStatus(e.target.value)}
+                          disabled={transitionBusy}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                        >
+                          <option value="available">Available</option>
+                          <option value="reserved">Reserved</option>
+                          <option value="sold">Sold</option>
+                          <option value="in_transit">In Transit</option>
+                          <option value="unavailable">Unavailable</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[11px] text-slate-400 block mb-1">Reason / Notes (Optional)</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Deposit received, in delivery"
+                          value={transitionNotes}
+                          onChange={(e) => setTransitionNotes(e.target.value)}
+                          disabled={transitionBusy}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end">
+                      <button
+                        type="submit"
+                        disabled={transitionBusy || transitionStatus === (inspectVehicle.status || (inspectVehicle.is_available ? "available" : "unavailable"))}
+                        className="btn-primary text-xs py-1.5 px-3 disabled:opacity-50"
+                      >
+                        {transitionBusy ? "Updating..." : "Apply Transition"}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {/* Status Audit Trail / History Timeline */}
+              <div className="rounded-lg border border-slate-800 bg-slate-950 p-3.5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <History className="h-4 w-4 text-slate-400" />
+                    <span className="font-semibold text-white text-xs">Lifecycle Status History</span>
+                  </div>
+                  <span className="text-[10px] text-slate-500">{statusHistory.length} events</span>
+                </div>
+                {loadingHistory ? (
+                  <p className="text-xs text-slate-400">Loading audit history...</p>
+                ) : statusHistory.length === 0 ? (
+                  <p className="text-xs text-slate-500 italic">No transition history recorded yet.</p>
+                ) : (
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    {statusHistory.map((h) => (
+                      <div
+                        key={h.id}
+                        className="flex flex-col gap-1 rounded border border-slate-800/80 bg-slate-900/60 p-2 text-xs"
+                      >
+                        <div className="flex items-center justify-between text-[11px]">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-medium text-slate-400 uppercase text-[10px]">{h.previous_status}</span>
+                            <ArrowRight className="h-3 w-3 text-slate-500" />
+                            <span className={`px-1.5 py-0.5 rounded font-semibold text-[10px] ${getStatusBadge(h.new_status).className}`}>
+                              {h.new_status}
+                            </span>
+                          </div>
+                          <span className="text-slate-500 text-[10px]">
+                            {new Date(h.created_at).toLocaleString()}
+                          </span>
+                        </div>
+                        {h.notes && (
+                          <p className="text-slate-300 text-[11px] italic pl-1 border-l-2 border-slate-700">
+                            "{h.notes}"
+                          </p>
+                        )}
+                        {h.changed_by_user_email && (
+                          <span className="text-[10px] text-slate-500">By: {h.changed_by_user_email}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div>

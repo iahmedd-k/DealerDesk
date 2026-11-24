@@ -12,15 +12,15 @@ class SafetyResult(BaseModel):
 
 # Patterns for prompt injection, jailbreaks, and persona overrides
 INJECTION_PATTERNS = [
-    re.compile(r"ignore\s+(all\s+)?(previous|prior)\s+(instructions|prompts|rules)", re.IGNORECASE),
-    re.compile(r"disregard\s+(all\s+)?(previous|prior)\s+(instructions|prompts|rules)", re.IGNORECASE),
+    re.compile(r"ignore\s+(all\s+)?(previous\s+|prior\s+)?(instructions|prompts|rules)", re.IGNORECASE),
+    re.compile(r"disregard\s+(all\s+)?(previous\s+|prior\s+)?(instructions|prompts|rules)", re.IGNORECASE),
     re.compile(r"(reveal|show|display|print)\s+(your\s+)?(system\s+prompt|instructions|initial\s+prompt)", re.IGNORECASE),
     re.compile(r"(what\s+is\s+your|tell\s+me\s+your)\s+system\s+prompt", re.IGNORECASE),
     re.compile(r"\b(DAN|jailbreak|developer\s+mode|unrestricted\s+mode)\b", re.IGNORECASE),
     re.compile(r"pretend\s+(you\s+are|to\s+be)\s+(not\s+an\s+ai|evil|a\s+hacker|an\s+unrestricted)", re.IGNORECASE),
     re.compile(r"(you\s+are\s+now|switch\s+to)\s+(god\s+mode|chaos\s+mode|developer\s+mode)", re.IGNORECASE),
     re.compile(r"(database\s+password|jwt_secret|api_key|secret_key|master\s+token)", re.IGNORECASE),
-    re.compile(r"(DROP\s+TABLE|SELECT\s+\*\s+FROM\s+users|--\s*;\s*DELETE)", re.IGNORECASE),
+    re.compile(r"(DROP\s+(?:TABLE|\w+\s+TABLE)|SELECT\s+\*\s+FROM\s+users|--\s*;\s*DELETE)", re.IGNORECASE),
 ]
 
 # Sensitive PII patterns (Credit cards & SSNs)

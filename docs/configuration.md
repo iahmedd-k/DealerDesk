@@ -73,6 +73,20 @@ to 10 MB; create the `vehicle-images` bucket in Supabase before uploading.
 | `RESEND_FROM_EMAIL` | `RESEND_FROM_EMAIL` | `DealerDesk Support <support@ahmedkhandev.tech>` | Sender identity. |
 | `RESEND_REPLY_TO` | `resend_reply_to` | unset | Optional reply-to address. |
 
+### Telephony, WhatsApp & Voice AI (Twilio, Vapi & ngrok)
+
+| Variable | Aliases | Default | Description |
+| --- | --- | --- | --- |
+| `TWILIO_ACCOUNT_SID` | `twilio_account_sid` | unset | Twilio Account SID found in Twilio Console. |
+| `TWILIO_AUTH_TOKEN` | `twilio_auth_token` | unset | Twilio Auth Token for REST API authentication. |
+| `TWILIO_WHATSAPP_FROM` | `twilio_whatsapp_from` | `whatsapp:+14155238886` | Twilio WhatsApp sender identifier (use `whatsapp:+14155238886` for Twilio Sandbox). |
+| `VAPI_API_KEY` | `vapi_api_key` | unset | Vapi private API key for initiating outbound calls and managing assistants. |
+| `VAPI_ASSISTANT_ID` | `vapi_assistant_id` | unset | Default Vapi assistant ID for voice calls. |
+| `VAPI_PHONE_NUMBER_ID` | `vapi_phone_number_id` | unset | Vapi phone number ID used for outbound calls. |
+| `VAPI_WEBHOOK_SECRET` | `vapi_webhook_secret` | unset | Optional secret validated against the `x-vapi-secret` webhook header. |
+| `NGROK_TOKEN` | — | unset | ngrok CLI authtoken for local webhook tunneling. |
+| `NGROK_ENDPOINT` | — | unset | Command and reserved domain for ngrok HTTP tunnel. |
+
 ### Knowledge embeddings
 
 | Variable | Default | Description |

@@ -7,6 +7,30 @@ const config: Config = {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        sans: [
+          "var(--font-inter)",
+          "var(--font-geist)",
+          "Inter",
+          "Geist",
+          "-apple-system",
+          "BlinkMacSystemFont",
+          "Segoe UI",
+          "Roboto",
+          "sans-serif",
+        ],
+      },
+      fontSize: {
+        "dashboard-heading": ["24px", { lineHeight: "1.3", fontWeight: "600" }],
+        "section-heading": ["18px", { lineHeight: "1.35", fontWeight: "600" }],
+        "kpi-number": ["28px", { lineHeight: "1.2", fontWeight: "600" }],
+        "table-header": ["13px", { lineHeight: "1.4", fontWeight: "500" }],
+        "table-content": ["14px", { lineHeight: "1.45", fontWeight: "400" }],
+        "form-label": ["14px", { lineHeight: "1.4", fontWeight: "500" }],
+        "input-text": ["14px", { lineHeight: "1.4", fontWeight: "400" }],
+        "supporting": ["12px", { lineHeight: "1.4", fontWeight: "400" }],
+        "button": ["14px", { lineHeight: "1.4", fontWeight: "500" }],
+      },
       colors: {
         background: "var(--background)",
         foreground: "var(--foreground)",

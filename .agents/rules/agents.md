@@ -157,3 +157,33 @@ project conventions.
 - For big changes, share a short plan and wait for approval.
 - When done, summarize: what changed, files touched, what was tested, what to check.
 - Flag risks or side effects you notice.
+
+## Frontend Typography & Number Formatting Standard
+Follow these typography and number formatting rules for all existing and newly created UI components, tables, headings, cards, and forms across the DealerDesk dashboard:
+- **Primary Font**: `Inter` (`var(--font-inter)`, `sans-serif`)
+- **Alternative Font**: `Geist` (`var(--font-geist)`, `sans-serif`)
+- **Numbers**: Tabular numerals (`font-variant-numeric: tabular-nums; font-feature-settings: 'tnum';`) must be used for all KPI numbers, currency figures, dates, counts, quantities, prices, and data tables so digits align consistently.
+
+### Dashboard Element Font Weights
+
+| Dashboard element | Font size | Font weight | Weight value | Usage / CSS Selector |
+| :--- | :--- | :--- | :--- | :--- |
+| **Main page headings** | `24px` | SemiBold | `600` | `.dashboard-heading`, `.page-title`, `h1` |
+| **Section headings** | `18px` | SemiBold | `600` | `.section-heading`, `h2` |
+| **Card / KPI titles** | `13px`–`14px` | Medium | `500` | `.kpi-card .kpi-label`, `.card-title`, `.kpi-title` |
+| **KPI numbers** | `28px` | SemiBold | `600` | `.kpi-number`, `.kpi-card .kpi-val` (tabular-nums) |
+| **Table column headings** | `13px` | Medium | `500` | `.table-header`, `th` |
+| **Table content** | `14px` | Regular | `400` | `.table-content`, `td` |
+| **Form labels** | `14px` | Medium | `500` | `.form-label`, `label` |
+| **Input values** | `14px` | Regular | `400` | `.input-text`, `input`, `select`, `textarea` |
+| **Buttons** | `14px` | Medium | `500` | `.btn-primary`, `.btn-secondary`, `button` |
+| **Sidebar navigation** | `13px`–`14px` | Medium | `500` | `.erp-sidebar a`, `.sidebar-nav-link` |
+| **Descriptions / helper text** | `12px` | Regular | `400` | `.supporting-text`, `.page-subtitle`, `p.description` |
+| **Badges / status labels** | `12px` | Medium | `500` | `.badge`, `.status-label` |
+
+### Number Formatting
+For dashboard numbers across all charts, cards, and tables:
+- **KPI figures**: Weight `600` (SemiBold), tabular numerals
+- **Table prices and quantities**: Weight `500` (Medium), tabular numerals
+- **Chart labels**: Weight `400` (Regular), tabular numerals
+- **Tabular alignment**: Always align digits consistently using tabular numerals.

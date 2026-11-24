@@ -25,32 +25,30 @@ let refreshInProgress: Promise<string | null> | null = null;
 export async function refreshStoredAccessToken(): Promise<string | null> {
   if (typeof window === "undefined") return null;
   const refreshToken = window.localStorage.getItem("dealerdesk_refresh");
-  if (!refreshToken) {
-    window.dispatchEvent(new Event("dealerdesk:auth-expired"));
-    return null;
-  }
   if (refreshInProgress) return refreshInProgress;
 
   refreshInProgress = (async () => {
     try {
       const response = await fetch(`${API_URL}/auth/refresh`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ refresh_token: refreshToken }),
+        body: JSON.stringify(refreshToken ? { refresh_token: refreshToken } : {}),
       });
       if (!response.ok) throw new Error("Session refresh failed");
       const tokens = (await response.json()) as {
         access_token: string;
         refresh_token: string;
       };
-      window.localStorage.setItem("dealerdesk_access", tokens.access_token);
-      window.localStorage.setItem("dealerdesk_refresh", tokens.refresh_token);
+      if (tokens.access_token) {
+        window.localStorage.setItem("dealerdesk_access", tokens.access_token);
+        window.localStorage.setItem("dealerdesk_refresh", tokens.refresh_token);
+      }
       return tokens.access_token;
     } catch (error) {
       window.localStorage.removeItem("dealerdesk_access");
       window.localStorage.removeItem("dealerdesk_refresh");
       window.dispatchEvent(new Event("dealerdesk:auth-expired"));
-      console.error("Could not refresh the DealerDesk session.", error);
       return null;
     } finally {
       refreshInProgress = null;
@@ -84,7 +82,11 @@ export async function api<T>(
     if (requestToken) requestHeaders.set("Authorization", `Bearer ${requestToken}`);
     else requestHeaders.delete("Authorization");
     try {
-      return await fetch(`${API_URL}${path}`, { ...options, headers: requestHeaders });
+      return await fetch(`${API_URL}${path}`, {
+        ...options,
+        credentials: options.credentials ?? "include",
+        headers: requestHeaders,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Network request failed";
       throw new ApiError(`Could not connect to DealerDesk: ${message}`, 0);

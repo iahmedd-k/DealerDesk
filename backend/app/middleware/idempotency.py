@@ -1,39 +1,36 @@
 import asyncio
+import base64
 import hashlib
 import json
-import time
-from collections import OrderedDict
-from dataclasses import dataclass
+import logging
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.db.session import SessionLocal
+from app.models.idempotency import IdempotencyKey
+
+logger = logging.getLogger(__name__)
 
 IDEMPOTENCY_TTL_SECONDS = 86400
-MAX_CACHE_ENTRIES = 5000
+LOCK_LEASE_SECONDS = 30
 MAX_CACHED_RESPONSE_BYTES = 1024 * 1024
 MAX_IDEMPOTENT_REQUEST_BYTES = 20 * 1024 * 1024
 
 
-@dataclass
-class CachedResponse:
-    expires_at: float
-    request_hash: str
-    status: int
-    headers: list[tuple[bytes, bytes]]
-    body: bytes
-
-
-@dataclass
-class LockEntry:
-    lock: asyncio.Lock
-    users: int = 0
-
-
 class IdempotencyMiddleware:
+    """
+    Distributed, database-backed idempotency middleware.
+    Protects mutating operations (POST, PUT, PATCH, DELETE) against concurrent duplicate executions
+    and replays responses for retried requests across multiple workers and service restarts.
+    """
+
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
-        self.cache: OrderedDict[str, CachedResponse] = OrderedDict()
-        self.locks: dict[str, LockEntry] = {}
+        self._local_locks: dict[str, asyncio.Lock] = {}
+        self._memory_fallback: dict[str, dict[str, Any]] = {}
 
     async def __call__(
         self,
@@ -77,6 +74,7 @@ class IdempotencyMiddleware:
                 request_too_large = True
             if not message.get("more_body", False):
                 break
+
         if request_too_large:
             await self.app(scope, self._replay_receive(receive, bytes(body)), send)
             return
@@ -101,36 +99,47 @@ class IdempotencyMiddleware:
             content_type + b"\0" + bytes(body)
         ).hexdigest()
 
-        entry = self.locks.get(scope_key)
-        if entry is None:
-            entry = LockEntry(asyncio.Lock())
-            self.locks[scope_key] = entry
-        entry.users += 1
-        await entry.lock.acquire()
+        # In-process lock to prevent duplicate async coroutine tasks in the same worker process
+        if scope_key not in self._local_locks:
+            self._local_locks[scope_key] = asyncio.Lock()
+        local_lock = self._local_locks[scope_key]
+
+        await local_lock.acquire()
         try:
-            self._remove_expired()
-            cached = self.cache.get(scope_key)
-            if cached is not None:
-                if cached.request_hash != request_hash:
-                    await self._send_error(
-                        send,
-                        409,
-                        "This idempotency key was already used with a different request",
-                    )
-                    return
-                self.cache.move_to_end(scope_key)
+            # Query/acquire database idempotency lease
+            lease_action, cached_response, error_msg = await asyncio.to_thread(
+                self._check_or_acquire_lease, scope_key, request_hash
+            )
+
+            if lease_action == "conflict":
+                await self._send_error(
+                    send,
+                    409,
+                    error_msg or "Conflict with idempotency key",
+                )
+                return
+
+            if lease_action == "replayed" and cached_response is not None:
+                replay_headers = [
+                    (header[0].encode("latin-1"), header[1].encode("latin-1"))
+                    for header in cached_response.get("headers", [])
+                ] + [(b"idempotent-replayed", b"true")]
+                replay_body = (
+                    base64.b64decode(cached_response["body"].encode("ascii"))
+                    if cached_response.get("body")
+                    else b""
+                )
                 await send(
                     {
                         "type": "http.response.start",
-                        "status": cached.status,
-                        "headers": cached.headers
-                        + [(b"idempotent-replayed", b"true")],
+                        "status": cached_response.get("status", 200),
+                        "headers": replay_headers,
                     }
                 )
                 await send(
                     {
                         "type": "http.response.body",
-                        "body": cached.body,
+                        "body": replay_body,
                         "more_body": False,
                     }
                 )
@@ -160,33 +169,201 @@ class IdempotencyMiddleware:
                         else:
                             response_cacheable = False
                             response_body.clear()
-                    if (
-                        not message.get("more_body", False)
-                        and response_cacheable
-                        and response_status is not None
-                        and 200 <= response_status < 300
-                    ):
-                        self.cache[scope_key] = CachedResponse(
-                            expires_at=time.monotonic() + IDEMPOTENCY_TTL_SECONDS,
-                            request_hash=request_hash,
-                            status=response_status,
-                            headers=response_headers,
-                            body=bytes(response_body),
-                        )
-                        self.cache.move_to_end(scope_key)
-                        self._trim_cache()
+                    if not message.get("more_body", False):
+                        if (
+                            response_cacheable
+                            and response_status is not None
+                            and 200 <= response_status < 300
+                        ):
+                            await asyncio.to_thread(
+                                self._complete_lease,
+                                scope_key,
+                                response_status,
+                                response_headers,
+                                bytes(response_body),
+                                request_hash,
+                            )
+                        else:
+                            await asyncio.to_thread(
+                                self._fail_lease,
+                                scope_key,
+                            )
                 await send(message)
 
-            await self.app(
-                scope,
-                self._replay_receive(receive, request_body),
-                capture_send,
-            )
+            try:
+                await self.app(
+                    scope,
+                    self._replay_receive(receive, request_body),
+                    capture_send,
+                )
+            except Exception:
+                await asyncio.to_thread(self._fail_lease, scope_key)
+                raise
         finally:
-            entry.lock.release()
-            entry.users -= 1
-            if entry.users == 0 and self.locks.get(scope_key) is entry:
-                del self.locks[scope_key]
+            local_lock.release()
+            if not local_lock.locked() and scope_key in self._local_locks:
+                self._local_locks.pop(scope_key, None)
+
+    def _check_or_acquire_lease(
+        self, scope_key: str, request_hash: str
+    ) -> tuple[str, dict[str, Any] | None, str | None]:
+        now = datetime.now(timezone.utc)
+        db = SessionLocal()
+        try:
+            record = (
+                db.query(IdempotencyKey)
+                .filter(IdempotencyKey.scope_key == scope_key)
+                .first()
+            )
+            if record is not None:
+                # Handle expired keys
+                record_expires = (
+                    record.expires_at.replace(tzinfo=timezone.utc)
+                    if record.expires_at.tzinfo is None
+                    else record.expires_at
+                )
+                if record_expires <= now:
+                    record.request_hash = request_hash
+                    record.status = "in_progress"
+                    record.locked_until = now + timedelta(seconds=LOCK_LEASE_SECONDS)
+                    record.expires_at = now + timedelta(seconds=IDEMPOTENCY_TTL_SECONDS)
+                    record.status_code = None
+                    record.headers = None
+                    record.response_body = None
+                    db.commit()
+                    return ("acquired", None, None)
+
+                if record.status == "completed":
+                    if record.request_hash != request_hash:
+                        return (
+                            "conflict",
+                            None,
+                            "This idempotency key was already used with a different request",
+                        )
+                    return (
+                        "replayed",
+                        {
+                            "status": record.status_code or 200,
+                            "headers": record.headers or [],
+                            "body": record.response_body or "",
+                        },
+                        None,
+                    )
+
+                if record.status == "in_progress":
+                    record_locked = (
+                        record.locked_until.replace(tzinfo=timezone.utc)
+                        if record.locked_until.tzinfo is None
+                        else record.locked_until
+                    )
+                    if record_locked > now:
+                        return (
+                            "conflict",
+                            None,
+                            "Request is currently being processed by another worker",
+                        )
+                    # Lease expired on abandoned request, take over lock lease
+                    record.request_hash = request_hash
+                    record.status = "in_progress"
+                    record.locked_until = now + timedelta(seconds=LOCK_LEASE_SECONDS)
+                    db.commit()
+                    return ("acquired", None, None)
+
+                # Previous attempt failed, allow retry
+                record.request_hash = request_hash
+                record.status = "in_progress"
+                record.locked_until = now + timedelta(seconds=LOCK_LEASE_SECONDS)
+                db.commit()
+                return ("acquired", None, None)
+
+            # Record does not exist, insert initial record
+            new_record = IdempotencyKey(
+                scope_key=scope_key,
+                request_hash=request_hash,
+                status="in_progress",
+                created_at=now,
+                locked_until=now + timedelta(seconds=LOCK_LEASE_SECONDS),
+                expires_at=now + timedelta(seconds=IDEMPOTENCY_TTL_SECONDS),
+            )
+            db.add(new_record)
+            try:
+                db.commit()
+                return ("acquired", None, None)
+            except IntegrityError:
+                db.rollback()
+                # Concurrent race condition: re-query
+                return self._check_or_acquire_lease(
+                    scope_key, request_hash
+                )
+        except SQLAlchemyError as exc:
+            logger.warning("Database error during idempotency check: %s", exc)
+            cached = self._memory_fallback.get(scope_key)
+            if cached is not None:
+                if cached.get("request_hash") != request_hash:
+                    return (
+                        "conflict",
+                        None,
+                        "This idempotency key was already used with a different request",
+                    )
+                return ("replayed", cached, None)
+            return ("acquired", None, None)
+        finally:
+            db.close()
+
+    def _complete_lease(
+        self,
+        scope_key: str,
+        status_code: int,
+        headers: list[tuple[bytes, bytes]],
+        body: bytes,
+        request_hash: str = "",
+    ) -> None:
+        db = SessionLocal()
+        try:
+            record = (
+                db.query(IdempotencyKey)
+                .filter(IdempotencyKey.scope_key == scope_key)
+                .first()
+            )
+            if record is not None:
+                record.status = "completed"
+                record.status_code = status_code
+                record.headers = [
+                    [h[0].decode("latin-1"), h[1].decode("latin-1")] for h in headers
+                ]
+                record.response_body = base64.b64encode(body).decode("ascii")
+                db.commit()
+        except SQLAlchemyError as exc:
+            logger.warning("Failed to save completed idempotency record: %s", exc)
+            db.rollback()
+            self._memory_fallback[scope_key] = {
+                "status": status_code,
+                "headers": [
+                    [h[0].decode("latin-1"), h[1].decode("latin-1")] for h in headers
+                ],
+                "body": base64.b64encode(body).decode("ascii"),
+                "request_hash": request_hash,
+            }
+        finally:
+            db.close()
+
+    @staticmethod
+    def _fail_lease(scope_key: str) -> None:
+        db = SessionLocal()
+        try:
+            record = (
+                db.query(IdempotencyKey)
+                .filter(IdempotencyKey.scope_key == scope_key)
+                .first()
+            )
+            if record is not None and record.status == "in_progress":
+                record.status = "failed"
+                db.commit()
+        except SQLAlchemyError as exc:
+            logger.warning("Failed to mark idempotency record as failed: %s", exc)
+            db.rollback()
+        finally:
+            db.close()
 
     @staticmethod
     def _replay_receive(receive: Receive, body: bytes) -> Receive:
@@ -222,17 +399,3 @@ class IdempotencyMiddleware:
                 "more_body": False,
             }
         )
-
-    def _remove_expired(self) -> None:
-        now = time.monotonic()
-        expired = [
-            cache_key
-            for cache_key, cached in self.cache.items()
-            if cached.expires_at <= now
-        ]
-        for cache_key in expired:
-            self.cache.pop(cache_key, None)
-
-    def _trim_cache(self) -> None:
-        while len(self.cache) > MAX_CACHE_ENTRIES:
-            self.cache.popitem(last=False)

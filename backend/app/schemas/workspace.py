@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -158,6 +159,42 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
+class VehicleStatus(str, Enum):
+    AVAILABLE = "available"
+    RESERVED = "reserved"
+    SOLD = "sold"
+    IN_TRANSIT = "in_transit"
+    UNAVAILABLE = "unavailable"
+
+
+class VehicleStatusTransitionRequest(BaseModel):
+    status: str = Field(description="New status: available, reserved, sold, in_transit, unavailable")
+    notes: str | None = Field(default=None, max_length=500, description="Optional notes explaining the transition")
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str) -> str:
+        allowed = {"available", "reserved", "sold", "in_transit", "unavailable"}
+        cleaned = value.strip().lower()
+        if cleaned not in allowed:
+            raise ValueError(f"status must be one of {sorted(allowed)}")
+        return cleaned
+
+
+class VehicleStatusHistoryResponse(BaseModel):
+    id: int
+    dealership_id: int
+    vehicle_id: int
+    changed_by_user_id: int | None = None
+    changed_by_user_email: str | None = None
+    previous_status: str
+    new_status: str
+    notes: str | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class VehicleCreateRequest(BaseModel):
     brand_id: int = Field(ge=1)
     model: str = Field(min_length=1, max_length=80)
@@ -166,7 +203,17 @@ class VehicleCreateRequest(BaseModel):
     description: str | None = None
     price: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
     stock_number: str = Field(min_length=1, max_length=64)
+    status: str = Field(default="available", description="Vehicle lifecycle status: available, reserved, sold, in_transit, unavailable")
     test_drive_enabled: bool = False
+
+    @field_validator("status")
+    @classmethod
+    def validate_vehicle_status(cls, value: str) -> str:
+        allowed = {"available", "reserved", "sold", "in_transit", "unavailable"}
+        cleaned = value.strip().lower()
+        if cleaned not in allowed:
+            raise ValueError(f"status must be one of {sorted(allowed)}")
+        return cleaned
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -178,6 +225,7 @@ class VehicleCreateRequest(BaseModel):
                 "description": "Sport-tuned suspension, panoramic glass roof, 9-inch multimedia display.",
                 "price": 36500.0,
                 "stock_number": "STK-2024-001",
+                "status": "available",
                 "test_drive_enabled": True,
             }
         }
@@ -200,6 +248,7 @@ class VehicleResponse(VehicleCreateRequest):
     id: int
     dealership_id: int
     make: str
+    status: str = "available"
     is_available: bool
     price: float
     images: list[VehicleImageResponse] = Field(default_factory=list)
@@ -225,8 +274,20 @@ class VehicleUpdateRequest(BaseModel):
         decimal_places=2,
     )
     stock_number: str | None = Field(default=None, min_length=1, max_length=64)
+    status: str | None = Field(default=None, description="Vehicle lifecycle status")
     is_available: bool | None = None
     test_drive_enabled: bool | None = None
+
+    @field_validator("status")
+    @classmethod
+    def validate_update_status(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        allowed = {"available", "reserved", "sold", "in_transit", "unavailable"}
+        cleaned = value.strip().lower()
+        if cleaned not in allowed:
+            raise ValueError(f"status must be one of {sorted(allowed)}")
+        return cleaned
 
 
 class DealershipUpdateRequest(BaseModel):
@@ -307,6 +368,10 @@ class TestDriveBookingRequest(BaseModel):
     confirmed: bool = Field(
         default=True,
         description="Explicit customer confirmation to book the slot",
+    )
+    hold_token: str | None = Field(
+        default=None,
+        description="Optional pre-existing slot reservation hold token",
     )
 
     model_config = ConfigDict(

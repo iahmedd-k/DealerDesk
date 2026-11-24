@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    desc,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -144,10 +145,17 @@ class Vehicle(Base):
     price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     stock_number: Mapped[str] = mapped_column(String(64))
     is_available: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(32), default="available", index=True)
     test_drive_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     images: Mapped[list["VehicleImage"]] = relationship(
         back_populates="vehicle",
         order_by="VehicleImage.position",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
+    status_history: Mapped[list["VehicleStatusHistory"]] = relationship(
+        back_populates="vehicle",
+        order_by="desc(VehicleStatusHistory.created_at)",
         lazy="selectin",
         cascade="all, delete-orphan",
     )
@@ -178,6 +186,32 @@ class VehicleImage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
     vehicle: Mapped[Vehicle] = relationship(back_populates="images")
+
+
+class VehicleStatusHistory(Base):
+    __tablename__ = "vehicle_status_history"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    dealership_id: Mapped[int] = mapped_column(
+        ForeignKey("dealerships.id", ondelete="CASCADE"), index=True
+    )
+    vehicle_id: Mapped[int] = mapped_column(
+        ForeignKey("vehicles.id", ondelete="CASCADE"), index=True
+    )
+    changed_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    previous_status: Mapped[str] = mapped_column(String(32))
+    new_status: Mapped[str] = mapped_column(String(32), index=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+    )
+
+    vehicle: Mapped[Vehicle] = relationship(back_populates="status_history")
+    changed_by_user: Mapped["User"] = relationship(foreign_keys=[changed_by_user_id], lazy="joined")
 
 
 class TestDriveSettings(Base):

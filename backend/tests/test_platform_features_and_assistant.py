@@ -99,19 +99,34 @@ def test_idempotency_middleware_replay() -> None:
 
 
 def test_structured_error_envelope() -> None:
-    client = TestClient(app)
-    custom_id = "err-envelope-id-4455"
-    res = client.get(
-        "/api/v1/dealerships/999999",
-        headers={"X-Request-ID": custom_id},
+    from app.dependencies.auth import get_current_user
+    from app.models.user import User
+    customer = User(
+        id=999,
+        email="cust@test.com",
+        name="Customer",
+        password="hash",
+        role="customer",
+        is_active=True,
+        dealership_id=None,
     )
-    assert res.status_code == 403
-    data = res.json()
-    assert "detail" in data
-    assert "error_code" in data
-    assert data["error_code"] == "FORBIDDEN"
-    assert data.get("request_id") == custom_id
-    assert "timestamp" in data
+    app.dependency_overrides[get_current_user] = lambda: customer
+    try:
+        client = TestClient(app)
+        custom_id = "err-envelope-id-4455"
+        res = client.get(
+            "/api/v1/dealerships/metrics",
+            headers={"X-Request-ID": custom_id},
+        )
+        assert res.status_code == 403
+        data = res.json()
+        assert "detail" in data
+        assert "error_code" in data
+        assert data["error_code"] == "FORBIDDEN"
+        assert data.get("request_id") == custom_id
+        assert "timestamp" in data
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
 
 
 def test_dealership_ai_assistant_grounded_response_mock() -> None:

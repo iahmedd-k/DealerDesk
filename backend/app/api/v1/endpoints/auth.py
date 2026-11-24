@@ -1,7 +1,9 @@
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
+from app.core.errors import UnauthorizedError
 from app.core.roles import DEALERSHIP_ADMIN_ROLE
 from app.core.limiter import limiter
 from app.db.session import get_db
@@ -13,12 +15,42 @@ from app.schemas.auth import (
     PasswordResetConfirm,
     PasswordResetRequest,
     RefreshTokenRequest,
+    ResendVerificationRequest,
     SignUpRequest,
     TokenResponse,
+    VerifyEmailRequest,
 )
 from app.schemas.user import UserResponse, UserUpdateRequest
 from app.schemas.workspace import ActivationRequest, ChangePasswordRequest
 from app.services import account_service
+
+
+def _set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> None:
+    settings = get_settings()
+    is_prod = getattr(settings, "environment", "development").lower() == "production"
+    response.set_cookie(
+        key="dd_access",
+        value=access_token,
+        max_age=1800,
+        httponly=True,
+        samesite="lax",
+        secure=is_prod,
+        path="/",
+    )
+    response.set_cookie(
+        key="dd_refresh",
+        value=refresh_token,
+        max_age=2592000,
+        httponly=True,
+        samesite="lax",
+        secure=is_prod,
+        path="/api/v1/auth",
+    )
+
+
+def _clear_auth_cookies(response: Response) -> None:
+    response.delete_cookie(key="dd_access", path="/")
+    response.delete_cookie(key="dd_refresh", path="/api/v1/auth")
 
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -63,10 +95,13 @@ def signup(
 @limiter.limit("10/minute")
 def login(
     request: Request,
+    response: Response,
     payload: LoginRequest,
     db: Session = Depends(get_db),
 ) -> TokenResponse:
-    return account_service.login(db, payload)
+    tokens = account_service.login(db, payload)
+    _set_auth_cookies(response, tokens.access_token, tokens.refresh_token)
+    return tokens
 
 
 @router.post(
@@ -80,11 +115,20 @@ def login(
     },
 )
 def logout(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    request: Request,
+    response: Response,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> None:
-    account_service.logout(db, credentials.credentials, current_user)
+    token = (
+        credentials.credentials
+        if credentials is not None and credentials.credentials
+        else request.cookies.get("dd_access")
+    )
+    if token:
+        account_service.logout(db, token, current_user)
+    _clear_auth_cookies(response)
 
 
 @router.get(
@@ -135,10 +179,46 @@ def delete_me(
 @limiter.limit("10/minute")
 def refresh_access_token(
     request: Request,
+    response: Response,
     payload: RefreshTokenRequest,
     db: Session = Depends(get_db),
 ) -> TokenResponse:
-    return account_service.refresh_access_token(db, payload)
+    refresh_token = payload.refresh_token or request.cookies.get("dd_refresh")
+    if not refresh_token:
+        raise UnauthorizedError("Refresh token required")
+    tokens = account_service.refresh_access_token(
+        db, RefreshTokenRequest(refresh_token=refresh_token)
+    )
+    _set_auth_cookies(response, tokens.access_token, tokens.refresh_token)
+    return tokens
+
+
+@router.post(
+    "/verify-email",
+    summary="Verify email address",
+    description="Validates an email verification token and marks the user's email as verified.",
+)
+@limiter.limit("5/minute")
+def verify_email(
+    request: Request,
+    payload: VerifyEmailRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    return account_service.verify_email(db, payload.token)
+
+
+@router.post(
+    "/resend-verification",
+    summary="Resend verification email",
+    description="Generates a new email verification token and sends it if the user has an unverified account.",
+)
+@limiter.limit("3/minute")
+def resend_verification(
+    request: Request,
+    payload: ResendVerificationRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    return account_service.resend_verification_email(db, str(payload.email))
 
 
 @router.post("/request-password-reset")

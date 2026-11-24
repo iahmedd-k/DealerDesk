@@ -27,6 +27,7 @@ build/
 coverage/
 
 # Editor and OS files
+.gemini/
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json

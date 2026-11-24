@@ -11,6 +11,7 @@ Welcome to the DealerDesk documentation. This directory describes the system **a
 | --- | --- | --- |
 | [Overview](overview.md) | Everyone | Product scope, implemented capabilities, current status |
 | [Architecture](architecture.md) | Engineers | System design, layers, components, request lifecycle |
+| [Multi-Channel AI Architecture](multi-channel-ai-architecture.md) | Engineers, Architects | Multi-channel AI agents, channel adapters, OTP verification, fault isolation |
 | [Data Model](data-model.md) | Engineers, DBAs | Tables, relationships, constraints, lifecycle rules |
 | [Authentication](authentication.md) | Engineers, Security | Identity, tokens, roles, authorization, reset flows |
 | [API Reference](api-reference.md) | API consumers, Frontend | Every implemented endpoint and its contract |
@@ -29,6 +30,9 @@ DealerDesk is a multi-dealership vehicle dealership management backend. It provi
 - Customer and dealership account management with JWT authentication.
 - Dealership workspaces with timezone-aware configuration.
 - Brand and vehicle inventory management with soft-delete history.
+- Multi-channel AI agent architecture (Website Chatbot, WhatsApp Business, Voice Telephony).
+- Separate Customer Sales Agent and Internal CRM Assistant roles.
+- Secure customer verification & OTP flow with temporary slot hold leases.
 - Staff invitations, roles, and lifecycle management.
 - Test-drive scheduling with capacity, timezone, and DST handling.
 - Optional transactional email (Resend) and Supabase Storage for brand logos.

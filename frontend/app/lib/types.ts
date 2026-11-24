@@ -36,6 +36,20 @@ export interface VehicleImage {
   position: number;
 }
 
+export type VehicleStatus = "available" | "reserved" | "sold" | "in_transit" | "unavailable";
+
+export interface VehicleStatusHistory {
+  id: number;
+  dealership_id: number;
+  vehicle_id: number;
+  changed_by_user_id: number | null;
+  changed_by_user_email?: string | null;
+  previous_status: string;
+  new_status: string;
+  notes: string | null;
+  created_at: string;
+}
+
 export interface Vehicle {
   id: number;
   dealership_id: number;
@@ -47,6 +61,7 @@ export interface Vehicle {
   description: string | null;
   price: number;
   stock_number: string;
+  status?: VehicleStatus;
   is_available: boolean;
   test_drive_enabled: boolean;
   images?: VehicleImage[];

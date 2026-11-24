@@ -246,8 +246,12 @@ Prefix: `/api/v1/dealerships/{dealership_id}/vehicles`
 | PATCH | `/{vehicle_id}` | Staff | Update a vehicle |
 | DELETE | `/{vehicle_id}` | Admin/Manager | Soft-delete a vehicle |
 | PATCH | `/{vehicle_id}/availability?available=true` | Staff | Toggle availability |
+| PATCH | `/{vehicle_id}/status` | Staff | Transition lifecycle status (`available`, `reserved`, `sold`, `in_transit`, `unavailable`) |
+| GET | `/{vehicle_id}/history` | Member | Get vehicle status transition history |
 
-Query parameter for `GET`: `include_archived_brands` (bool, default `false`, Admin/Manager only). By default, listings exclude vehicles whose brand is inactive or deleted.
+Query parameters for `GET`:
+- `status` (string, optional): Filter by lifecycle status (`available`, `reserved`, `sold`, `in_transit`, `unavailable`).
+- `include_archived_brands` (bool, default `false`, Admin/Manager only). By default, listings exclude vehicles whose brand is inactive or deleted.
 
 ### Create request
 
@@ -740,6 +744,96 @@ Response:
   "page_size": 50
 }
 ```
+
+## Multi-Channel AI Adapters & Orchestration
+
+See [Multi-Channel AI Architecture](multi-channel-ai-architecture.md) for architectural details and security guarantees.
+
+### Orchestration Dispatch
+
+`POST /api/v1/orchestration/dispatch` (Public / Internal)
+
+Dispatches normalized inbound events across any channel to the appropriate agent persona (Sales Agent or CRM Assistant).
+
+```json
+{
+  "dealership_id": 1,
+  "channel": "website",
+  "channel_user_id": "web_session_abc",
+  "message": "Do you have any 2024 electric SUVs in stock?"
+}
+```
+
+### Website Channel
+
+`POST /api/v1/dealerships/{dealership_id}/channels/website/message` (Public)
+
+Inbound message turn for the customer chat widget. Returns structured outbound payload with text, quick-reply actions, vehicle cards, and available test-drive slots.
+
+### WhatsApp Business & Twilio Sandbox Channel
+
+- `GET /api/v1/dealerships/{dealership_id}/channels/whatsapp/webhook` (Public): Responds to Meta challenge verification (`hub.challenge`).
+- `POST /api/v1/dealerships/{dealership_id}/channels/whatsapp/webhook` (Public): Inbound Meta WhatsApp webhook. Validates `X-Hub-Signature-256`, de-duplicates messages (`wamid.*`), and returns interactive WhatsApp payloads.
+- `GET /api/v1/channels/whatsapp/webhook` (Public): Twilio WhatsApp health check endpoint confirming adapter operational status. (Alias: `/channels/whatsapp/webhook`)
+- `POST /api/v1/channels/whatsapp/webhook` (Public): Twilio WhatsApp inbound webhook. Accepts Form parameters (`From`, `Body`, `ProfileName`, `MessageSid`), routes conversation through the Customer Sales Agent, and responds with synchronous TwiML XML (`<Response><Message>...</Message></Response>`). (Alias: `/channels/whatsapp/webhook`)
+- `POST /api/v1/channels/whatsapp/status` (Public): Twilio WhatsApp delivery receipt callback (`MessageSid`, `MessageStatus`, `To`).
+
+### Voice Telephony Channel (Twilio Voice & Vapi Voice AI)
+
+- `POST /api/v1/dealerships/{dealership_id}/channels/voice/webhook` (Public): Inbound telephony speech recognition webhook. Normalizes spoken pricing and outputs valid XML TwiML (`<Response>`, `<Say>`, `<Gather>`).
+- `GET /api/v1/channels/vapi/webhook` (Public): Vapi voice channel adapter health check. (Alias: `/channels/vapi/webhook`)
+- `POST /api/v1/channels/vapi/webhook` (Public): Primary Vapi Server URL webhook. Handles dynamic `assistant-request`, executes real-time function tools (`search_inventory`, `get_vehicle_details`, `get_available_test_drive_slots`, `book_test_drive`, `get_dealership_info`, `capture_customer_lead`), and captures `end-of-call-report` into CRM leads and conversations. (Alias: `/channels/vapi/webhook`)
+- `GET /api/v1/channels/vapi/assistant-spec` (Public): Generates exportable Vapi assistant JSON schema with all function tool definitions and voice system prompt.
+- `POST /api/v1/channels/vapi/call` (Public / Staff): Initiates an autonomous outbound telephone call to a customer using the Vapi REST API.
+
+---
+
+## Customer Sales Agent & Verification
+
+Prefix: `/api/v1/dealerships/{dealership_id}/sales-agent`
+
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| `POST` | `/chat` | Public / Customer | Direct single turn with consultative Sales Agent |
+| `POST` | `/chat/stream` | Public / Customer | Server-Sent Events (SSE) streaming turn with Sales Agent |
+| `POST` | `/verification/initiate` | Public / Customer | Acquires 10m slot hold and issues single-use OTP |
+| `POST` | `/verification/confirm` | Public / Customer | Verifies OTP, provisions customer, and atomically books slot |
+| `POST` | `/slot-holds` | Public / Customer | Directly creates a 10-minute temporary slot hold lease |
+| `POST` | `/leads` | Public / Customer | Captures customer purchase interest as a CRM lead |
+| `GET` | `/conversations/{id}/messages` | Public / Customer | Returns persistent message turn history |
+
+### POST `/sales-agent/verification/initiate`
+
+```json
+{
+  "slot_id": 42,
+  "destination": "customer@example.com",
+  "channel": "website",
+  "customer_name": "Chloe Customer"
+}
+```
+
+- Returns `200` with `status: "otp_sent"` and `hold_token`.
+- Response is opaque: never discloses whether destination has an existing account.
+- Slot hold capacity check is enforced atomically via row locks.
+
+### POST `/sales-agent/verification/confirm`
+
+```json
+{
+  "hold_token": "hold_a1b2c3d4...",
+  "code": "123456",
+  "destination": "customer@example.com",
+  "channel": "website",
+  "customer_name": "Chloe Customer",
+  "confirmed": true
+}
+```
+
+- Enforces single-use cryptographic OTP verification with 3-attempt limit.
+- Provisions verified customer account (`CUSTOMER_ROLE`) if new, or links existing account.
+- Executes atomic booking with capacity validation and marks hold confirmed.
+- Returns `200` with `BookingVerificationConfirmResponse` containing `booking_id` and formatted confirmation message.
 
 ## Related documents
 

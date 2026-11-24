@@ -256,6 +256,69 @@ staff and linked to at most one matching test-drive booking.
 | `next_follow_up_at` | timestamptz | nullable, indexed | Staff-managed follow-up time |
 | `created_at`, `updated_at` | timestamptz | not null | |
 
+### `conversations`
+
+Tracks segregated multi-channel conversational sessions for website visitors, WhatsApp senders, and phone callers.
+
+| Column | Type | Constraints | Notes |
+| --- | --- | --- | --- |
+| `id` | integer | PK, indexed | |
+| `dealership_id` | integer | FK → `dealerships.id`, indexed | Multi-tenant boundary |
+| `channel` | varchar(32) | indexed | `website`, `whatsapp`, `voice` |
+| `channel_user_id` | varchar(128) | indexed | Phone number or browser session token |
+| `customer_id` | integer | FK → `users.id`, nullable, indexed | Linked upon verified customer authentication |
+| `status` | varchar(32) | default `active` | `active`, `closed`, `handed_off` |
+| `channel_metadata` | json | nullable | Channel routing & context metadata |
+| `created_at`, `updated_at` | timestamptz | not null | |
+
+### `conversation_messages`
+
+Persistent message turns for conversation continuity and prompt synthesis.
+
+| Column | Type | Constraints | Notes |
+| --- | --- | --- | --- |
+| `id` | integer | PK, indexed | |
+| `conversation_id` | integer | FK → `conversations.id`, indexed | Cascade delete on conversation removal |
+| `sender_type` | varchar(32) | not null | `customer`, `agent`, `staff`, `system` |
+| `sender_id` | integer | FK → `users.id`, nullable | Associated user ID if authenticated |
+| `content` | text | not null | Message text or speech transcription |
+| `channel_metadata` | json | nullable | Delivery status, intent, or button payload |
+| `created_at` | timestamptz | not null | |
+
+### `test_drive_slot_holds`
+
+Atomic 10-minute slot lease holds to prevent race conditions during customer verification.
+
+| Column | Type | Constraints | Notes |
+| --- | --- | --- | --- |
+| `id` | integer | PK, indexed | |
+| `dealership_id` | integer | FK → `dealerships.id`, indexed | Multi-tenant boundary |
+| `slot_id` | integer | FK → `test_drive_slots.id`, indexed | Target test-drive slot |
+| `customer_id` | integer | FK → `users.id`, nullable, indexed | Optional customer user ID |
+| `identifier` | varchar(128) | indexed | Phone or email address holding the slot |
+| `hold_token` | varchar(64) | unique, indexed | Secret token confirmed during booking |
+| `status` | varchar(24) | default `held` | `held`, `confirmed`, `expired`, `released` |
+| `expires_at` | timestamptz | indexed | TTL lease expiration (default 10 minutes) |
+| `created_at` | timestamptz | not null | |
+
+### `otp_verifications`
+
+Single-use cryptographically hashed one-time passwords for customer ownership verification.
+
+| Column | Type | Constraints | Notes |
+| --- | --- | --- | --- |
+| `id` | integer | PK, indexed | |
+| `dealership_id` | integer | FK → `dealerships.id`, indexed | Multi-tenant boundary |
+| `channel` | varchar(32) | not null | `whatsapp`, `sms`, `email`, `voice` |
+| `identifier` | varchar(128) | indexed | Phone number or email address |
+| `otp_hash` | varchar(64) | not null | SHA-256 hash of the 6-digit code |
+| `purpose` | varchar(32) | default `test_drive_booking` | Verification purpose |
+| `attempts` | integer | default 0 | Number of failed validation attempts |
+| `max_attempts` | integer | default 3 | Maximum allowed validation attempts |
+| `expires_at` | timestamptz | indexed | Expiry timestamp (5-minute TTL) |
+| `verified_at` | timestamptz | nullable | Set upon successful single-use verification |
+| `created_at` | timestamptz | not null | |
+
 ## Lifecycle rules
 
 | Entity | Deactivate | Delete | Restore |

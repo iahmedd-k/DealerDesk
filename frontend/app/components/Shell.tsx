@@ -228,7 +228,7 @@ export default function Shell({ children }: ShellProps) {
                     <Link
                       key={link.href}
                       href={link.href}
-                      className={`flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
+                      className={`flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all ${
                         isActive
                           ? "bg-blue-600 text-white shadow-sm"
                           : "text-slate-300 hover:bg-slate-800 hover:text-white"

@@ -24,9 +24,17 @@ os.environ["DATABASE_SCHEMA"] = test_schema
 os.environ["JWT_SECRET_KEY"] = "test-only-jwt-secret-that-is-at-least-32-bytes"
 os.environ["RESEND_API_KEY"] = ""
 
+from app.core.config import get_settings  # noqa: E402
+get_settings.cache_clear()
+
 from app.db.base import Base  # noqa: E402
+from app.db.migrations import (  # noqa: E402
+    ensure_security_and_idempotency_tables,
+    ensure_vehicle_lifecycle_and_audit_columns,
+)
 from app.db.session import SessionLocal, engine  # noqa: E402
-from app.main import app  # noqa: E402
+from app.main import app as fastapi_app  # noqa: E402
+import app.models  # noqa: F401, E402
 from app.models import User  # noqa: E402
 
 
@@ -57,6 +65,8 @@ def reset_database(request: pytest.FixtureRequest) -> Iterator[None]:
         return
     _reset_test_schema()
     Base.metadata.create_all(bind=engine)
+    ensure_security_and_idempotency_tables(engine)
+    ensure_vehicle_lifecycle_and_audit_columns(engine)
     yield
     _reset_test_schema()
 
@@ -72,7 +82,7 @@ def db() -> Iterator[Session]:
 
 @pytest.fixture
 def client() -> Iterator[TestClient]:
-    with TestClient(app) as test_client:
+    with TestClient(fastapi_app) as test_client:
         yield test_client
 
 

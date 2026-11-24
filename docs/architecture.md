@@ -53,12 +53,15 @@ backend/
 │   ├── models/                 # SQLAlchemy models (user, workspace)
 │   ├── repositories/           # User and dealership data access
 │   ├── schemas/                # Pydantic request/response models
-│   └── services/               # Auth, dealership, email logic
+│   ├── services/               # Auth, dealership, sales agent, verification, slot holds
+│   ├── adapters/               # Website, WhatsApp, Voice channel adapters
+│   ├── orchestration/          # Central multi-channel orchestrator
+│   └── tools/                  # Deterministic sales agent inventory/booking tools
 ├── seed/                       # Demo accounts and stable credentials
 ├── tests/                      # Integration and unit tests
 ├── requirements.txt
 └── pytest.ini
-frontend/                       # Not implemented (node_modules only)
+frontend/                       # Next.js 15 Tailwind Dashboard
 docs/                           # This documentation
 ```
 

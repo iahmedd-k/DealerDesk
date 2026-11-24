@@ -30,6 +30,20 @@ def get_platform_metrics(
     return dealership_service.get_platform_metrics(db)
 
 
+@router.post("/maintenance/retention")
+def run_retention_maintenance(
+    dry_run: bool = False,
+    audit_days: int = 365,
+    current_user: User = Depends(require_dealerdesk_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.services.retention_service import cleanup_expired_data
+
+    return cleanup_expired_data(
+        db, dry_run=dry_run, audit_retention_days=audit_days
+    )
+
+
 @router.get("/public", response_model=list[DealershipResponse])
 def list_public_dealerships(db: Session = Depends(get_db)) -> list[Dealership]:
     return dealership_service.list_active_dealerships(db)

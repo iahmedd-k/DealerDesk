@@ -14,6 +14,8 @@ from app.schemas.workspace import (
     VehicleImageResponse,
     VehicleImageUpdateRequest,
     VehicleResponse,
+    VehicleStatusHistoryResponse,
+    VehicleStatusTransitionRequest,
     VehicleUpdateRequest,
 )
 from app.services import vehicle_service
@@ -90,6 +92,7 @@ def list_vehicles(
     brand_id: int | None = Query(default=None, description="Filter by brand ID"),
     min_price: Decimal | None = Query(default=None, ge=0, description="Minimum price filter"),
     max_price: Decimal | None = Query(default=None, ge=0, description="Maximum price filter"),
+    status: str | None = Query(default=None, description="Filter by lifecycle status (available, reserved, sold, in_transit, unavailable)"),
     is_available: bool | None = Query(default=None, description="Filter by availability status"),
     test_drive_enabled: bool | None = Query(default=None, description="Filter by test drive availability"),
     search: str | None = Query(default=None, description="Search keyword in model, make, variant, or stock number"),
@@ -108,6 +111,7 @@ def list_vehicles(
         brand_id=brand_id,
         min_price=min_price,
         max_price=max_price,
+        status=status,
         is_available=is_available,
         test_drive_enabled=test_drive_enabled,
         search=search,
@@ -124,6 +128,7 @@ def list_vehicles(
             brand_id=brand_id,
             min_price=min_price,
             max_price=max_price,
+            status=status,
             is_available=is_available,
             test_drive_enabled=test_drive_enabled,
             search=search,
@@ -304,3 +309,55 @@ def update_vehicle_availability(
         current_user,
         available,
     )
+
+
+@router.patch("/{vehicle_id}/status", response_model=VehicleResponse)
+def transition_vehicle_status(
+    dealership_id: int,
+    vehicle_id: int,
+    payload: VehicleStatusTransitionRequest,
+    current_user: User = Depends(
+        require_dealership_roles(
+            DEALERSHIP_ADMIN_ROLE,
+            MANAGER_ROLE,
+            SALES_REP_ROLE,
+        )
+    ),
+    db: Session = Depends(get_db),
+) -> Vehicle:
+    return vehicle_service.transition_vehicle_status(
+        db,
+        dealership_id,
+        vehicle_id,
+        current_user,
+        payload,
+    )
+
+
+@router.get("/{vehicle_id}/history", response_model=list[VehicleStatusHistoryResponse])
+def get_vehicle_status_history(
+    dealership_id: int,
+    vehicle_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[VehicleStatusHistoryResponse]:
+    history_records = vehicle_service.get_vehicle_status_history(
+        db,
+        dealership_id,
+        vehicle_id,
+        current_user,
+    )
+    return [
+        VehicleStatusHistoryResponse(
+            id=item.id,
+            dealership_id=item.dealership_id,
+            vehicle_id=item.vehicle_id,
+            changed_by_user_id=item.changed_by_user_id,
+            changed_by_user_email=item.changed_by_user.email if item.changed_by_user else None,
+            previous_status=item.previous_status,
+            new_status=item.new_status,
+            notes=item.notes,
+            created_at=item.created_at,
+        )
+        for item in history_records
+    ]

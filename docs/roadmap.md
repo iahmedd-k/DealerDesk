@@ -24,6 +24,7 @@ for requirement-level status.
   test-drive booking linkage. The assistant follow-up form creates a lead.
 - Frontend pages call the backend APIs and report loading and request errors;
   customer and staff workflows are role-aware.
+- Inventory lifecycle management supporting rich states (`available`, `reserved`, `sold`, `in_transit`, `unavailable`), audited status transitions (`VehicleStatusHistory`), audit log integration (`AuditLog`), query filtering, and real-time frontend transition controls and history timelines.
 - Alembic migrations run before the backend in Docker Compose. CI runs backend
   migration/tests and frontend lint/build.
 
@@ -50,8 +51,6 @@ for requirement-level status.
 
 ### Inventory, reporting, and governance
 
-- Inventory lifecycle is represented by availability flags; reserved/sold
-  states and status history are not modeled.
 - Staff availability, multi-location operations, and sales deals are absent.
 - Audit events cover selected workflows, not every sensitive mutation.
 - Reporting and workflow observability are limited; no event outbox or
