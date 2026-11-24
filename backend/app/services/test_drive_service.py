@@ -4,8 +4,9 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.authorization import ensure_dealership_access, ensure_role
+from app.core.authorization import ensure_dealership_access, ensure_dealership_role_access, ensure_role
 from app.core.errors import (
+    BadRequestError,
     ConflictError,
     NotFoundError,
     UnprocessableEntityError,
@@ -13,6 +14,7 @@ from app.core.errors import (
 from app.core.roles import (
     CUSTOMER_ROLE,
     DEALERSHIP_ADMIN_ROLE,
+    STAFF_ROLES,
 )
 from app.models.user import User
 from app.models.workspace import (
@@ -20,15 +22,19 @@ from app.models.workspace import (
     TestDriveSettings,
     TestDriveSlot,
 )
-from app.repositories import dealership_repository, test_drive_repository
+from app.repositories import test_drive_repository
 from app.schemas.workspace import (
+    TestDriveBookingRequest,
+    TestDriveCancellationRequest,
+    TestDriveRescheduleRequest,
     TestDriveSettingsRequest,
     TestDriveSlotUpdateRequest,
 )
+from app.services import dealership_service
 
 
 def get_settings(db: Session, dealership_id: int) -> TestDriveSettings:
-    _get_active_dealership(db, dealership_id)
+    dealership_service.get_active_dealership(db, dealership_id)
     settings = test_drive_repository.get_settings(db, dealership_id)
     if settings is None:
         raise NotFoundError("Test-drive settings not found")
@@ -41,8 +47,8 @@ def update_settings(
     current_user: User,
     payload: TestDriveSettingsRequest,
 ) -> TestDriveSettings:
-    _ensure_admin_access(current_user, dealership_id)
-    dealership = _get_active_dealership(db, dealership_id)
+    ensure_dealership_role_access(current_user, dealership_id, DEALERSHIP_ADMIN_ROLE)
+    dealership = dealership_service.get_active_dealership(db, dealership_id)
     opening = _parse_time(payload.opening_time)
     closing = _parse_time(payload.closing_time)
     if opening >= closing:
@@ -66,10 +72,10 @@ def generate_slots(
     start_date: date,
     end_date: date,
 ) -> list[TestDriveSlot]:
-    _ensure_admin_access(current_user, dealership_id)
+    ensure_dealership_role_access(current_user, dealership_id, DEALERSHIP_ADMIN_ROLE)
     if end_date < start_date or (end_date - start_date).days > 90:
         raise UnprocessableEntityError("Date range must be 0 to 90 days")
-    dealership = _get_active_dealership(db, dealership_id)
+    dealership = dealership_service.get_active_dealership(db, dealership_id)
     settings = test_drive_repository.get_settings(db, dealership_id)
     if settings is None:
         raise UnprocessableEntityError("Configure test-drive settings first")
@@ -115,7 +121,7 @@ def delete_settings(
     dealership_id: int,
     current_user: User,
 ) -> None:
-    _ensure_admin_access(current_user, dealership_id)
+    ensure_dealership_role_access(current_user, dealership_id, DEALERSHIP_ADMIN_ROLE)
     settings = test_drive_repository.get_settings(db, dealership_id)
     if settings is None:
         raise NotFoundError("Test-drive settings not found")
@@ -131,18 +137,41 @@ def list_slots(
     db: Session,
     dealership_id: int,
     *,
+    vehicle_id: int | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    available_only: bool = False,
     include_inactive: bool = False,
 ) -> list[TestDriveSlot]:
-    _get_active_dealership(db, dealership_id)
+    if start_date is not None and end_date is not None and end_date < start_date:
+        raise UnprocessableEntityError("End date must be on or after start date")
+    dealership = dealership_service.get_active_dealership(db, dealership_id)
+    zone = ZoneInfo(dealership.timezone)
+    start_at = (
+        datetime.combine(start_date, time.min, tzinfo=zone).astimezone(timezone.utc)
+        if start_date is not None
+        else None
+    )
+    end_at = (
+        datetime.combine(end_date + timedelta(days=1), time.min, tzinfo=zone).astimezone(
+            timezone.utc
+        )
+        if end_date is not None
+        else None
+    )
     return test_drive_repository.list_slots(
         db,
         dealership_id,
+        vehicle_id=vehicle_id,
+        start_at=start_at,
+        end_at=end_at,
+        available_only=available_only,
         include_inactive=include_inactive,
     )
 
 
 def get_slot(db: Session, dealership_id: int, slot_id: int) -> TestDriveSlot:
-    _get_active_dealership(db, dealership_id)
+    dealership_service.get_active_dealership(db, dealership_id)
     return _get_slot(db, dealership_id, slot_id)
 
 
@@ -153,7 +182,7 @@ def update_slot(
     current_user: User,
     payload: TestDriveSlotUpdateRequest,
 ) -> TestDriveSlot:
-    _ensure_admin_access(current_user, dealership_id)
+    ensure_dealership_role_access(current_user, dealership_id, DEALERSHIP_ADMIN_ROLE)
     slot = _get_slot(db, dealership_id, slot_id, lock=True)
     if not payload.is_active and slot.booked_count:
         raise ConflictError("Booked slots cannot be disabled")
@@ -168,7 +197,7 @@ def delete_slot(
     slot_id: int,
     current_user: User,
 ) -> None:
-    _ensure_admin_access(current_user, dealership_id)
+    ensure_dealership_role_access(current_user, dealership_id, DEALERSHIP_ADMIN_ROLE)
     slot = _get_slot(db, dealership_id, slot_id, lock=True)
     if slot.booked_count:
         raise ConflictError("Booked slots cannot be disabled")
@@ -196,17 +225,61 @@ def list_bookings_for_slot(
     )
 
 
+def get_booking(
+    db: Session,
+    dealership_id: int,
+    booking_id: int,
+    current_user: User,
+) -> TestDriveBooking:
+    dealership_service.get_active_dealership(db, dealership_id)
+    booking = test_drive_repository.get_booking(db, dealership_id, booking_id)
+    if booking is None:
+        raise NotFoundError("Booking not found")
+    if current_user.role == CUSTOMER_ROLE:
+        if booking.customer_id != current_user.id:
+            raise NotFoundError("Booking not found")
+    else:
+        ensure_dealership_role_access(current_user, dealership_id, *STAFF_ROLES)
+    return booking
+
+
+def list_bookings(
+    db: Session,
+    dealership_id: int,
+    current_user: User,
+    *,
+    status: str | None = None,
+    customer_id: int | None = None,
+    vehicle_id: int | None = None,
+    slot_id: int | None = None,
+) -> list[TestDriveBooking]:
+    dealership_service.get_active_dealership(db, dealership_id)
+    if current_user.role == CUSTOMER_ROLE:
+        return test_drive_repository.list_bookings(
+            db,
+            dealership_id,
+            customer_id=current_user.id,
+            status=status,
+            vehicle_id=vehicle_id,
+            slot_id=slot_id,
+        )
+    ensure_dealership_role_access(current_user, dealership_id, *STAFF_ROLES)
+    return test_drive_repository.list_bookings(
+        db,
+        dealership_id,
+        customer_id=customer_id,
+        status=status,
+        vehicle_id=vehicle_id,
+        slot_id=slot_id,
+    )
+
+
 def list_customer_bookings(
     db: Session,
     dealership_id: int,
     current_user: User,
 ) -> list[TestDriveBooking]:
-    ensure_role(current_user, CUSTOMER_ROLE)
-    return test_drive_repository.list_customer_bookings(
-        db,
-        dealership_id,
-        current_user.id,
-    )
+    return list_bookings(db, dealership_id, current_user)
 
 
 def book_slot(
@@ -214,9 +287,14 @@ def book_slot(
     dealership_id: int,
     slot_id: int,
     current_user: User,
+    payload: TestDriveBookingRequest | None = None,
 ) -> TestDriveBooking:
     ensure_role(current_user, CUSTOMER_ROLE)
-    _get_active_dealership(db, dealership_id)
+    if payload is not None and not payload.confirmed:
+        raise BadRequestError(
+            "Explicit confirmation is required to book a test drive"
+        )
+    dealership_service.get_active_dealership(db, dealership_id)
     slot = _get_slot(db, dealership_id, slot_id, lock=True)
     if not slot.is_active:
         raise ConflictError("Test-drive slot is inactive")
@@ -224,6 +302,13 @@ def book_slot(
         raise ConflictError("Test-drive slot is in the past")
     if slot.booked_count >= slot.capacity:
         raise ConflictError("Test-drive slot is full")
+    from app.services import slot_hold_service
+    if payload is not None and payload.hold_token:
+        slot_hold_service.confirm_slot_hold(db, payload.hold_token)
+    else:
+        active_holds = slot_hold_service.get_active_holds_count_for_slot(db, slot.id)
+        if (slot.booked_count + active_holds) >= slot.capacity:
+            raise ConflictError("Test-drive slot is currently reserved")
     vehicle = test_drive_repository.get_vehicle(db, slot.vehicle_id)
     brand = (
         test_drive_repository.get_brand(db, vehicle.brand_id)
@@ -239,8 +324,13 @@ def book_slot(
         or brand.is_deleted
     ):
         raise ConflictError("Vehicle is unavailable for test drives")
+    test_drive_repository.lock_customer(db, current_user.id)
     if test_drive_repository.has_booking(db, slot.id, current_user.id):
         raise ConflictError("Customer already booked this slot")
+    if test_drive_repository.has_overlapping_booking(
+        db, current_user.id, slot.starts_at, slot.ends_at, exclude_slot_id=slot.id
+    ):
+        raise ConflictError("Customer already has an active test drive during this time")
     booking = TestDriveBooking(
         slot_id=slot.id,
         dealership_id=dealership_id,
@@ -255,11 +345,105 @@ def book_slot(
         raise ConflictError("Customer already booked this slot") from exc
 
 
+def reschedule_booking(
+    db: Session,
+    dealership_id: int,
+    booking_id: int,
+    payload: TestDriveRescheduleRequest,
+    current_user: User,
+) -> TestDriveBooking:
+    if not payload.confirmed:
+        raise BadRequestError(
+            "Explicit confirmation is required to reschedule a test drive"
+        )
+    dealership_service.get_active_dealership(db, dealership_id)
+    booking = test_drive_repository.get_booking(
+        db, dealership_id, booking_id, lock=True
+    )
+    if booking is None:
+        raise NotFoundError("Booking not found")
+    if current_user.role == CUSTOMER_ROLE:
+        if booking.customer_id != current_user.id:
+            raise NotFoundError("Booking not found")
+        if payload.verification_email is not None:
+            if (
+                payload.verification_email.strip().lower()
+                != current_user.email.strip().lower()
+            ):
+                raise BadRequestError(
+                    "Customer contact verification failed: provided email does not match booking record"
+                )
+    else:
+        ensure_dealership_role_access(current_user, dealership_id, *STAFF_ROLES)
+
+    if booking.status != "booked":
+        raise ConflictError(
+            f"Cannot reschedule a booking with status '{booking.status}'"
+        )
+
+    if payload.new_slot_id == booking.slot_id:
+        return booking
+
+    new_slot = _get_slot(db, dealership_id, payload.new_slot_id, lock=True)
+    if not new_slot.is_active:
+        raise ConflictError("Target test-drive slot is inactive")
+    if _utc(new_slot.starts_at) <= datetime.now(timezone.utc):
+        raise ConflictError("Target test-drive slot is in the past")
+    if new_slot.booked_count >= new_slot.capacity:
+        raise ConflictError("Target test-drive slot is full")
+
+    vehicle = test_drive_repository.get_vehicle(db, new_slot.vehicle_id)
+    brand = (
+        test_drive_repository.get_brand(db, vehicle.brand_id)
+        if vehicle is not None
+        else None
+    )
+    if (
+        vehicle is None
+        or not vehicle.is_available
+        or not vehicle.test_drive_enabled
+        or brand is None
+        or not brand.is_active
+        or brand.is_deleted
+    ):
+        raise ConflictError("Target vehicle is unavailable for test drives")
+
+    test_drive_repository.lock_customer(db, booking.customer_id)
+    if test_drive_repository.has_booking(db, new_slot.id, booking.customer_id):
+        raise ConflictError("Customer already booked the target slot")
+    if test_drive_repository.has_overlapping_booking(
+        db,
+        booking.customer_id,
+        new_slot.starts_at,
+        new_slot.ends_at,
+        exclude_slot_id=booking.slot_id,
+    ):
+        raise ConflictError(
+            "Customer already has an active test drive during target time"
+        )
+
+    old_slot = test_drive_repository.get_slot_by_id(db, booking.slot_id, lock=True)
+    if old_slot is not None and old_slot.booked_count > 0:
+        old_slot.booked_count -= 1
+
+    new_slot.booked_count += 1
+    booking.slot_id = new_slot.id
+    booking.vehicle_id = new_slot.vehicle_id
+
+    if old_slot is not None:
+        test_drive_repository.save(db, booking, old_slot, new_slot)
+    else:
+        test_drive_repository.save(db, booking, new_slot)
+    return booking
+
+
 def cancel_booking(
     db: Session,
     dealership_id: int,
     booking_id: int,
     current_user: User,
+    payload: TestDriveCancellationRequest | None = None,
+    verification_email: str | None = None,
 ) -> None:
     booking = test_drive_repository.get_booking(
         db,
@@ -272,8 +456,16 @@ def cancel_booking(
     if current_user.role == CUSTOMER_ROLE:
         if booking.customer_id != current_user.id:
             raise NotFoundError("Booking not found")
+        check_email = verification_email or (
+            payload.verification_email if payload else None
+        )
+        if check_email is not None:
+            if check_email.strip().lower() != current_user.email.strip().lower():
+                raise BadRequestError(
+                    "Customer contact verification failed: provided email does not match booking record"
+                )
     else:
-        ensure_dealership_access(current_user, dealership_id)
+        ensure_dealership_role_access(current_user, dealership_id, *STAFF_ROLES)
     if booking.status == "booked":
         booking.status = "cancelled"
         booking.cancelled_at = datetime.now(timezone.utc)
@@ -284,20 +476,6 @@ def cancel_booking(
             test_drive_repository.save(db, booking)
         else:
             test_drive_repository.save(db, booking, slot)
-
-
-def _ensure_admin_access(current_user: User, dealership_id: int) -> None:
-    ensure_dealership_access(current_user, dealership_id)
-    ensure_role(current_user, DEALERSHIP_ADMIN_ROLE)
-
-
-def _get_active_dealership(db: Session, dealership_id: int):
-    dealership = dealership_repository.get_active_by_id(db, dealership_id)
-    if dealership is None:
-        raise NotFoundError("Dealership not found")
-    return dealership
-
-
 def _get_slot(
     db: Session,
     dealership_id: int,

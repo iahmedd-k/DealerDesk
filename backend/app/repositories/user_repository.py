@@ -52,6 +52,10 @@ def list_for_dealership(db: Session, dealership_id: int) -> list[User]:
     )
 
 
+def list_all(db: Session) -> list[User]:
+    return list(db.scalars(select(User).order_by(User.id)))
+
+
 def save(db: Session, user: User, *, refresh: bool = False) -> User:
     db.add(user)
     db.commit()

@@ -54,7 +54,7 @@ The repository rule file `.agents/rules/agents.md` defines the standards. Key po
 ### Logging
 
 - Use module-level `logging.getLogger(__name__)` rather than `print`.
-- `app/main.py` currently prints a startup message; prefer structured logging when adding new code.
+- The application startup message is emitted through the module logger.
 
 ## Common tasks
 

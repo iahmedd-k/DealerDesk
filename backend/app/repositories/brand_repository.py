@@ -16,7 +16,15 @@ def list_for_dealership(
         query = query.where(Brand.is_deleted.is_(False))
     if not include_inactive:
         query = query.where(Brand.is_active.is_(True))
-    return list(db.scalars(query.order_by(Brand.name, Brand.id)))
+    brands = list(db.scalars(query.order_by(Brand.name, Brand.id)))
+    for b in brands:
+        b.vehicles_count = (
+            db.scalar(
+                select(func.count(Vehicle.id)).where(Vehicle.brand_id == b.id)
+            )
+            or 0
+        )
+    return brands
 
 
 def lock_active_dealership(db: Session, dealership_id: int) -> Dealership | None:

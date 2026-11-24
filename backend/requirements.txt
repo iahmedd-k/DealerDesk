@@ -8,6 +8,7 @@ pydantic-settings
 python-dotenv
 email-validator
 python-multipart
+pypdf
 tzdata
 
 # Database (PostgreSQL)
@@ -19,6 +20,7 @@ alembic
 PyJWT
 pwdlib[argon2]
 cryptography
+slowapi
 
 # HTTP Client
 httpx
@@ -32,3 +34,6 @@ ruff
 
 # Supabase
 supabase
+
+# Telephony & Multi-Channel
+twilio

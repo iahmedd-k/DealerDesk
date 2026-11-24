@@ -19,23 +19,19 @@ Run from the `backend/` directory so imports resolve. Some platforms prefer a mo
 
 ## Startup behaviour
 
-On startup the application:
+The application does not create or alter tables at runtime. Apply the Alembic
+revision chain before starting the API:
 
-1. Connects to PostgreSQL using `DATABASE_URL` (or its aliases).
-2. Runs `Base.metadata.create_all` to create missing tables.
-3. Runs `ensure_vehicle_brand_associations`:
-   - Adds `vehicles.brand_id` and its index if missing.
-   - Creates brands from legacy `make` values and backfills associations.
-   - Adds the brand foreign key and sets `brand_id NOT NULL`.
-   - **Fails startup** if any vehicle cannot be associated.
-4. Creates the partial unique index for active test-drive bookings.
-5. On shutdown, disposes the engine.
+```bash
+cd backend
+alembic upgrade head
+```
 
-Implications:
-
-- The first startup needs DDL privileges on the database.
-- Multiple workers may run startup concurrently; operations are written to be idempotent, but a migration-capable role is advisable.
-- There is **no Alembic revision history** in the repo despite `alembic` being installed. Schema evolution currently relies on `create_all` and the startup migration. See [Roadmap & Limitations](roadmap.md).
+The Docker Compose stack runs this as a one-shot `migrate` service and starts
+the backend only after the migration succeeds. For other deployment platforms,
+run the same command as a release step using a migration-capable database role;
+the application runtime role should not need schema-alter privileges. The
+backend disposes its SQLAlchemy engine on shutdown.
 
 ## Required configuration
 
@@ -52,6 +48,7 @@ Recommended for full functionality:
 | --- | --- |
 | `SUPABASE_URL`, `SUPABASE_KEY` | Brand logo upload/delete |
 | `SUPABASE_BUCKET_ID` | Target bucket (default `brand-logos`) |
+| `VEHICLE_IMAGES_BUCKET_ID` | Vehicle image bucket (default `vehicle-images`) |
 | `RESEND_API_KEY` | Invitation and reset emails |
 | `RESEND_FROM_EMAIL` | Verified sender |
 | `DATABASE_POOL_*` | Pool tuning for your database plan |
@@ -62,10 +59,11 @@ See [Configuration](configuration.md).
 
 ### Supabase Storage
 
-1. Create a **public** bucket (default name `brand-logos`).
+1. Create public buckets for brand logos (`brand-logos`) and vehicle images
+   (`vehicle-images`), or configure the bucket names below.
 2. Set `SUPABASE_URL` and `SUPABASE_KEY`.
 3. Ensure the server key can write to the bucket.
-4. Logos are stored at `dealerships/{dealership_id}/brands/{brand_id}/logo` with upsert enabled.
+4. Logos and vehicle images are stored under dealership-scoped object paths.
 
 If unconfigured, logo endpoints return `503`; the rest of the API works.
 
@@ -81,32 +79,28 @@ If unconfigured, invitations and reset requests still persist records but email 
 
 - [ ] Use a strong random `JWT_SECRET_KEY` (32+ bytes) from a secret manager.
 - [ ] Use a TLS-enabled PostgreSQL DSN and a least-privilege application role.
+- [ ] Run `alembic upgrade head` as a release step before deploying new code.
 - [ ] Set `DATABASE_POOL_SIZE` / `DATABASE_MAX_OVERFLOW` appropriate to the database plan.
 - [ ] Configure Supabase and Resend if those features are required.
 - [ ] Run with multiple workers behind a reverse proxy that terminates TLS.
 - [ ] Restrict database network access to the application.
 - [ ] Back up the database and test restore procedures.
 - [ ] Ensure logs are captured centrally; do not log secrets or tokens.
-- [ ] Add rate limiting / WAF at the edge until in-app controls exist.
-- [ ] Configure CORS at the edge or add middleware before serving a browser frontend.
+- [ ] Configure assistant/authentication rate limits and edge protections for public traffic.
+- [ ] Set explicit CORS origins for the deployed frontend.
 - [ ] Monitor error rates on auth, booking, and migration startup.
 
 ## Known deployment constraints
 
 | Constraint | Impact |
 | --- | --- |
-| No CORS middleware | Browser clients on another origin cannot call the API directly. |
-| No rate limiting / lockout | Auth endpoints are exposed to brute-force attempts unless protected upstream. |
-| Refresh/reset/invitation tokens stored plaintext | Database read access exposes session/reset secrets. |
-| Money stored as `float` | Precision risk for currency calculations. |
-| No pagination | Large dealerships return full collections. |
-| Startup DDL | Requires schema-alter privileges at runtime. |
-| No health check of dependencies | `/api/v1/health` always returns `ok`; it does not probe the database. |
+| Assistant replies depend on configured catalog and knowledge data | Missing source data is reported as unavailable; it is not inferred. |
+| Health check | `/api/v1/health` probes PostgreSQL; external service statuses report configuration, not live connectivity. |
 
 ## Scaling notes
 
 - The app is stateless for access tokens (JWT), but revocation and refresh state live in PostgreSQL, so all instances share the same database.
-- Row-level locks (`SELECT ... FOR UPDATE`) serialize booking/cancellation and last-admin checks. Keep transactions short under load.
+- Row-level locks (`SELECT ... FOR UPDATE`) serialize booking/cancellation, customer overlap checks, and last-admin checks. Keep transactions short under load.
 - Brand logo storage is offloaded to Supabase; the app only proxies uploads.
 
 ## Related documents

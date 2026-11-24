@@ -48,6 +48,7 @@ Roles are stored on the `users` table and enforced on every protected route. See
 ### Vehicles
 - Create/read/update inventory per dealership, always associated with an active brand in the same dealership.
 - Unique stock number per dealership.
+- Upload and manage up to 10 JPEG/PNG/WebP images per vehicle in Supabase Storage, with public URLs, alt text, and display ordering.
 - Availability toggle and soft deletion (marks unavailable and disables test drives).
 - Archived-brand vehicles remain retrievable individually but are excluded from default listings.
 

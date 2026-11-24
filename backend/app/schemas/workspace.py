@@ -1,7 +1,17 @@
 from datetime import datetime
+from decimal import Decimal
+from enum import Enum
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    computed_field,
+    field_validator,
+)
 
 
 STAFF_ROLES = {"dealership_admin", "manager", "sales_rep"}
@@ -43,6 +53,22 @@ class DealershipRegistrationRequest(BaseModel):
             raise ValueError("brand names cannot contain duplicates")
         return cleaned
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "dealership_name": "Apex Motors NYC",
+                "dealership_email": "contact@apexmotors.com",
+                "dealership_phone": "+1-212-555-0199",
+                "dealership_address": "450 W 33rd St, New York, NY 10001",
+                "timezone": "America/New_York",
+                "brands": ["Toyota", "BMW", "Audi"],
+                "admin_name": "Marcus Vance",
+                "admin_email": "marcus@apexmotors.com",
+                "admin_password": "SecurePassword!123",
+            }
+        }
+    )
+
 
 class BrandCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
@@ -54,6 +80,14 @@ class BrandCreateRequest(BaseModel):
         if not value:
             raise ValueError("brand name cannot be blank")
         return value
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "Porsche",
+            }
+        }
+    )
 
 
 class BrandUpdateRequest(BaseModel):
@@ -74,9 +108,10 @@ class BrandResponse(BaseModel):
     id: int
     dealership_id: int
     name: str
-    logo_url: str | None
+    logo_url: str | None = None
     is_active: bool
     is_deleted: bool
+    vehicles_count: int = 0
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -92,6 +127,16 @@ class StaffInvitationRequest(BaseModel):
         if value not in STAFF_ROLES - {"dealership_admin"}:
             raise ValueError("role must be manager or sales_rep")
         return value
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "Jane Sales",
+                "email": "jane@apexmotors.com",
+                "role": "sales_rep",
+            }
+        }
+    )
 
 
 class StaffInvitationResponse(BaseModel):
@@ -114,24 +159,106 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
+class VehicleStatus(str, Enum):
+    AVAILABLE = "available"
+    RESERVED = "reserved"
+    SOLD = "sold"
+    IN_TRANSIT = "in_transit"
+    UNAVAILABLE = "unavailable"
+
+
+class VehicleStatusTransitionRequest(BaseModel):
+    status: str = Field(description="New status: available, reserved, sold, in_transit, unavailable")
+    notes: str | None = Field(default=None, max_length=500, description="Optional notes explaining the transition")
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str) -> str:
+        allowed = {"available", "reserved", "sold", "in_transit", "unavailable"}
+        cleaned = value.strip().lower()
+        if cleaned not in allowed:
+            raise ValueError(f"status must be one of {sorted(allowed)}")
+        return cleaned
+
+
+class VehicleStatusHistoryResponse(BaseModel):
+    id: int
+    dealership_id: int
+    vehicle_id: int
+    changed_by_user_id: int | None = None
+    changed_by_user_email: str | None = None
+    previous_status: str
+    new_status: str
+    notes: str | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class VehicleCreateRequest(BaseModel):
     brand_id: int = Field(ge=1)
     model: str = Field(min_length=1, max_length=80)
     model_year: int = Field(ge=1886, le=2200)
     variant: str | None = Field(default=None, max_length=120)
     description: str | None = None
-    price: float = Field(ge=0)
+    price: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
     stock_number: str = Field(min_length=1, max_length=64)
+    status: str = Field(default="available", description="Vehicle lifecycle status: available, reserved, sold, in_transit, unavailable")
     test_drive_enabled: bool = False
+
+    @field_validator("status")
+    @classmethod
+    def validate_vehicle_status(cls, value: str) -> str:
+        allowed = {"available", "reserved", "sold", "in_transit", "unavailable"}
+        cleaned = value.strip().lower()
+        if cleaned not in allowed:
+            raise ValueError(f"status must be one of {sorted(allowed)}")
+        return cleaned
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "brand_id": 1,
+                "model": "Camry",
+                "model_year": 2024,
+                "variant": "XSE V6",
+                "description": "Sport-tuned suspension, panoramic glass roof, 9-inch multimedia display.",
+                "price": 36500.0,
+                "stock_number": "STK-2024-001",
+                "status": "available",
+                "test_drive_enabled": True,
+            }
+        }
+    )
+
+
+class VehicleImageResponse(BaseModel):
+    id: int
+    vehicle_id: int
+    public_url: str
+    media_type: str
+    alt_text: str | None
+    position: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class VehicleResponse(VehicleCreateRequest):
     id: int
     dealership_id: int
     make: str
+    status: str = "available"
     is_available: bool
+    price: float
+    images: list[VehicleImageResponse] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class VehicleImageUpdateRequest(BaseModel):
+    position: int | None = Field(default=None, ge=0)
+    alt_text: str | None = Field(default=None, max_length=255)
 
 
 class VehicleUpdateRequest(BaseModel):
@@ -140,10 +267,27 @@ class VehicleUpdateRequest(BaseModel):
     model_year: int | None = Field(default=None, ge=1886, le=2200)
     variant: str | None = Field(default=None, max_length=120)
     description: str | None = None
-    price: float | None = Field(default=None, ge=0)
+    price: Decimal | None = Field(
+        default=None,
+        ge=0,
+        max_digits=12,
+        decimal_places=2,
+    )
     stock_number: str | None = Field(default=None, min_length=1, max_length=64)
+    status: str | None = Field(default=None, description="Vehicle lifecycle status")
     is_available: bool | None = None
     test_drive_enabled: bool | None = None
+
+    @field_validator("status")
+    @classmethod
+    def validate_update_status(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        allowed = {"available", "reserved", "sold", "in_transit", "unavailable"}
+        cleaned = value.strip().lower()
+        if cleaned not in allowed:
+            raise ValueError(f"status must be one of {sorted(allowed)}")
+        return cleaned
 
 
 class DealershipUpdateRequest(BaseModel):
@@ -167,8 +311,40 @@ class DealershipUpdateRequest(BaseModel):
 class DealershipResponse(DealershipUpdateRequest):
     id: int
     is_active: bool
+    subscription_plan: str = "pro"
+    subscription_status: str = "active"
+    monthly_price: float = 499.0
+    max_brands: int = 10
+    max_vehicles: int = 250
+    created_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class DealershipDetailedResponse(DealershipResponse):
+    brands_count: int = 0
+    vehicles_count: int = 0
+    staff_count: int = 0
+
+
+class DealershipSubscriptionUpdateRequest(BaseModel):
+    subscription_plan: str | None = Field(default=None)
+    subscription_status: str | None = Field(default=None)
+    monthly_price: Decimal | None = Field(default=None, ge=0)
+    max_brands: int | None = Field(default=None, ge=1)
+    max_vehicles: int | None = Field(default=None, ge=1)
+    is_active: bool | None = None
+
+
+class PlatformMetricsResponse(BaseModel):
+    total_dealerships: int
+    active_dealerships: int
+    total_mrr: float
+    total_vehicles: int
+    total_bookings: int
+    total_staff: int
+    total_brands: int
+    plan_distribution: dict[str, int]
 
 
 class StaffUpdateRequest(BaseModel):
@@ -188,15 +364,167 @@ class TestDriveSlotUpdateRequest(BaseModel):
     is_active: bool
 
 
+class TestDriveBookingRequest(BaseModel):
+    confirmed: bool = Field(
+        default=True,
+        description="Explicit customer confirmation to book the slot",
+    )
+    hold_token: str | None = Field(
+        default=None,
+        description="Optional pre-existing slot reservation hold token",
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "confirmed": True,
+            }
+        }
+    )
+
+
+class TestDriveRescheduleRequest(BaseModel):
+    new_slot_id: int
+    verification_email: str | None = Field(
+        default=None,
+        description="Customer email for contact/identity verification",
+    )
+    verification_phone: str | None = Field(
+        default=None,
+        description="Customer phone for contact/identity verification",
+    )
+    confirmed: bool = Field(
+        default=True,
+        description="Explicit confirmation to reschedule",
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "new_slot_id": 42,
+                "verification_email": "customer@example.com",
+                "confirmed": True,
+            }
+        }
+    )
+
+
+class TestDriveCancellationRequest(BaseModel):
+    verification_email: str | None = Field(
+        default=None,
+        description="Customer email for contact/identity verification",
+    )
+    verification_phone: str | None = Field(
+        default=None,
+        description="Customer phone for contact/identity verification",
+    )
+    reason: str | None = Field(
+        default=None,
+        max_length=255,
+        description="Reason for cancellation",
+    )
+
+
 class TestDriveBookingResponse(BaseModel):
     id: int
     slot_id: int
     dealership_id: int
     vehicle_id: int
     customer_id: int
+    customer_name: str | None = None
+    customer_email: EmailStr | None = None
+    vehicle_name: str | None = None
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
     status: str
     created_at: datetime
     cancelled_at: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CustomerLeadCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    email: EmailStr
+    phone: str | None = Field(default=None, max_length=32)
+    message: str = Field(min_length=1, max_length=2000)
+    source: Literal["website", "assistant", "phone", "walk_in", "referral"] = "website"
+    requested_vehicle_id: int | None = Field(default=None, ge=1)
+    consent_to_contact: Literal[True]
+
+    @field_validator("name", "message")
+    @classmethod
+    def trim_required_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("value cannot be blank")
+        return value
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: EmailStr) -> str:
+        return str(value).lower()
+
+    @field_validator("phone")
+    @classmethod
+    def normalize_phone(cls, value: str | None) -> str | None:
+        if value is not None:
+            value = value.strip()
+            return value or None
+        return value
+
+
+class CustomerLeadUpdateRequest(BaseModel):
+    status: Literal[
+        "new",
+        "contacted",
+        "qualified",
+        "test_drive_scheduled",
+        "won",
+        "lost",
+        "follow_up",
+    ] | None = None
+    assigned_to_user_id: int | None = Field(default=None, ge=1)
+    next_follow_up_at: datetime | None = None
+
+    @field_validator("next_follow_up_at")
+    @classmethod
+    def validate_follow_up_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.utcoffset() is None:
+            raise ValueError("next_follow_up_at must include a timezone")
+        return value
+
+
+class CustomerLeadConvertRequest(BaseModel):
+    booking_id: int = Field(ge=1)
+
+
+class CustomerLeadResponse(BaseModel):
+    id: int
+    dealership_id: int
+    customer_id: int | None
+    requested_vehicle_id: int | None
+    assigned_to_user_id: int | None
+    test_drive_booking_id: int | None
+    name: str
+    email: EmailStr
+    phone: str | None
+    message: str
+    source: str
+    status: Literal[
+        "new",
+        "contacted",
+        "qualified",
+        "test_drive_scheduled",
+        "won",
+        "lost",
+        "follow_up",
+    ]
+    consent_to_contact: bool
+    consented_at: datetime | None
+    next_follow_up_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -225,6 +553,18 @@ class TestDriveSettingsRequest(BaseModel):
             raise ValueError("days_open cannot contain duplicates")
         return sorted(value)
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "opening_time": "09:00",
+                "closing_time": "18:00",
+                "slot_duration_minutes": 30,
+                "capacity_per_slot": 2,
+                "days_open": [0, 1, 2, 3, 4, 5],
+            }
+        }
+    )
+
 
 class TestDriveSettingsResponse(TestDriveSettingsRequest):
     id: int
@@ -248,5 +588,15 @@ class TestDriveSlotResponse(BaseModel):
     capacity: int
     booked_count: int
     is_active: bool
+
+    @computed_field
+    @property
+    def remaining_capacity(self) -> int:
+        return max(0, self.capacity - self.booked_count)
+
+    @computed_field
+    @property
+    def is_available(self) -> bool:
+        return self.is_active and (self.capacity - self.booked_count) > 0
 
     model_config = ConfigDict(from_attributes=True)

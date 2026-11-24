@@ -6,11 +6,25 @@ All application endpoints are versioned under `/api/v1`. Interactive documentati
 
 ## Conventions
 
-- **Content type:** `application/json`, except logo upload (`multipart/form-data`).
+- **Content type:** `application/json`, except logo/image/document uploads (`multipart/form-data`).
 - **Authentication:** `Authorization: Bearer <access_token>` for protected endpoints.
-- **Errors:** FastAPI default shape `{ "detail": "message" }`.
-- **Collections:** endpoints return JSON arrays without pagination or envelopes.
-- **Dealership scoping:** `{dealership_id}` must match the caller's assigned dealership; otherwise `404`.
+- **Request Tracing:** All responses include `X-Request-ID`. Clients can pass a custom `X-Request-ID` header which will be preserved and propagated.
+- **Idempotency:** Write requests (`POST`, `PUT`, `PATCH`) support the `Idempotency-Key: <unique-uuid>` header. Repeated requests return cached responses with `Idempotent-Replayed: true` within the same API process. The cache is currently in-memory and is not shared across workers or restarts.
+- **Standard Error Envelope:** Errors return a consistent schema:
+  ```json
+  {
+    "detail": "Description of error",
+    "error_code": "NOT_FOUND | FORBIDDEN | UNAUTHORIZED | ...",
+    "request_id": "req-uuid",
+    "timestamp": "2026-11-20T23:59:00Z"
+  }
+  ```
+- **Collections & Pagination:** Collection endpoints accept `page`, `page_size`, `sort_by`, `order`, and filters. Pagination metadata is returned in response headers:
+  - `X-Total-Count`: Total number of matching items.
+  - `X-Page`: Current page index (1-based).
+  - `X-Page-Size`: Items per page limit.
+  - `X-Total-Pages`: Total calculated page count.
+- **Dealership scoping:** `{dealership_id}` must match the caller's assigned dealership; otherwise `404` or `403`.
 - **Timestamps:** ISO 8601. Slot times are stored and returned in UTC.
 
 ### Authorization legend
@@ -30,7 +44,7 @@ All application endpoints are versioned under `/api/v1`. Interactive documentati
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
 | GET | `/` | Public | API status: `{ "message": "DealerDesk backend is running" }` |
-| GET | `/api/v1/health` | Public | Health: `{ "status": "ok" }` |
+| GET | `/api/v1/health` | Public | Returns database availability/latency and external-service configuration status; responds `503` if PostgreSQL is unavailable. |
 
 ## Authentication
 
@@ -150,11 +164,12 @@ Prefix: `/api/v1/dealerships`
 
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
-| GET | `` | Public | List active dealerships |
-| GET | `/{dealership_id}` | Public | Get an active dealership |
+| GET | `/public` | Public | List active dealerships (for customer onboarding and discovery) |
+| GET | `` | Platform Admin | List all active dealerships across the platform (`dealerdesk_admin`) |
+| GET | `/{dealership_id}` | Member / Platform Admin | Get an active dealership (associated tenant member or `dealerdesk_admin`) |
 | POST | `/register` | Public | Register a dealership and its first admin |
-| PATCH | `/{dealership_id}` | Admin | Update dealership profile/timezone |
-| DELETE | `/{dealership_id}` | Admin | Soft-deactivate the dealership |
+| PATCH | `/{dealership_id}` | Admin / Platform Admin | Update dealership profile/timezone |
+| DELETE | `/{dealership_id}` | Admin / Platform Admin | Soft-deactivate the dealership |
 
 ### POST `/dealerships/register`
 
@@ -224,11 +239,19 @@ Prefix: `/api/v1/dealerships/{dealership_id}/vehicles`
 | POST | `` | Staff | Create a vehicle |
 | GET | `` | Member | List vehicles |
 | GET | `/{vehicle_id}` | Member | Get a vehicle |
+| GET | `/{vehicle_id}/images` | Member | List the vehicle's images |
+| POST | `/{vehicle_id}/images` | Staff | Upload a vehicle image to Supabase Storage |
+| PATCH | `/{vehicle_id}/images/{image_id}` | Staff | Update alt text or display position |
+| DELETE | `/{vehicle_id}/images/{image_id}` | Staff | Delete image from Supabase Storage and metadata |
 | PATCH | `/{vehicle_id}` | Staff | Update a vehicle |
 | DELETE | `/{vehicle_id}` | Admin/Manager | Soft-delete a vehicle |
 | PATCH | `/{vehicle_id}/availability?available=true` | Staff | Toggle availability |
+| PATCH | `/{vehicle_id}/status` | Staff | Transition lifecycle status (`available`, `reserved`, `sold`, `in_transit`, `unavailable`) |
+| GET | `/{vehicle_id}/history` | Member | Get vehicle status transition history |
 
-Query parameter for `GET`: `include_archived_brands` (bool, default `false`, Admin/Manager only). By default, listings exclude vehicles whose brand is inactive or deleted.
+Query parameters for `GET`:
+- `status` (string, optional): Filter by lifecycle status (`available`, `reserved`, `sold`, `in_transit`, `unavailable`).
+- `include_archived_brands` (bool, default `false`, Admin/Manager only). By default, listings exclude vehicles whose brand is inactive or deleted.
 
 ### Create request
 
@@ -248,10 +271,87 @@ Query parameter for `GET`: `include_archived_brands` (bool, default `false`, Adm
 - `brand_id` must reference an active, non-deleted brand in the same dealership (`422` otherwise).
 - `stock_number` must be unique per dealership (`409`).
 - `make` is derived from the brand name.
+- Vehicle responses include the ordered `images` list, including public URL, alt text, media type, and position.
+
+### Vehicle image management
+
+`POST /{vehicle_id}/images` accepts `multipart/form-data`:
+
+- `file` (required): JPEG, PNG, or WebP image up to 10 MB.
+- `alt_text` (optional): accessibility description up to 255 characters.
+
+Images are validated against their file signature and uploaded under
+`dealerships/{dealership_id}/vehicles/{vehicle_id}/` in the configured public
+Supabase bucket. A vehicle can have at most 10 images. The first uploaded image
+is the primary image (position 0).
+
+`PATCH /{vehicle_id}/images/{image_id}` accepts either or both fields:
+
+```json
+{ "position": 0, "alt_text": "Front view" }
+```
+
+Positions are zero-based and must refer to an existing position. Reordering
+keeps positions contiguous; position 0 is the primary image.
+
+Errors include `404` for a vehicle/image outside the dealership, `409` when the
+image limit is reached, `413` for an oversized image, `415` for unsupported
+formats, `422` for a mismatched image signature, `502` for storage failures,
+and `503` when Supabase is not configured.
 
 ### Update request
 
 All fields optional: `brand_id`, `model`, `model_year`, `variant`, `description`, `price`, `stock_number`, `is_available`, `test_drive_enabled`. Setting `is_available=true` or `test_drive_enabled=true` is rejected with `409` if the brand is inactive/deleted.
+
+## Dealership Knowledge
+
+Prefix: `/api/v1/dealerships/{dealership_id}/knowledge`
+
+Documents are stored as extracted text and indexed chunks; the original upload is
+not retained. PDF, UTF-8 TXT, and Markdown files up to 15 MB are accepted.
+Scanned/image-only and encrypted PDFs are not supported. PDFs are limited to
+500 pages. Documents may be dealership-wide (`brand_id` omitted) or scoped to
+one active brand in the same dealership.
+
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| GET | `/documents` | Staff | List indexed documents and processing metadata |
+| POST | `/documents` | Admin/Manager | Upload, extract, chunk, and index a document |
+| DELETE | `/documents/{document_id}` | Admin/Manager | Delete a document and its indexed chunks |
+| POST | `/search` | Staff | Retrieve relevant chunks with source metadata |
+
+### POST `/knowledge/documents`
+
+`multipart/form-data` fields:
+
+- `file` (required): PDF, TXT, or Markdown file.
+- `brand_id` (optional): active brand ID. If omitted, the document is dealership-wide.
+
+Returns `201` with document ID, filename, scope, status, page count, chunk count,
+and upload/processing timestamps. Upload and indexing complete synchronously;
+failed extraction or embedding does not create a partial document.
+
+### POST `/knowledge/search`
+
+```json
+{ "query": "What is the hybrid battery warranty?", "brand_id": 3, "limit": 5 }
+```
+
+`brand_id` and `limit` are optional (`limit` defaults to 5; maximum 10). With a
+brand selected, search includes dealership-wide and that brand's documents. With
+no brand selected, search includes only dealership-wide documents; content for
+other brands is never mixed into an ambiguous query.
+
+Each result contains `content`, similarity `score`, `document_id`, `filename`,
+`brand_id`, `page_number` (for PDFs), and `chunk_index`. Empty or unmatched
+searches return an empty array. The backend returns source passages rather than
+generating an answer. Agents must treat passages as untrusted document content
+and use the structured vehicle catalog for catalog facts where available.
+
+Set `EMBEDDING_API_URL` to an OpenAI-compatible embeddings endpoint (and
+`EMBEDDING_API_KEY` / `EMBEDDING_MODEL` as required by that provider) for
+semantic embeddings. If unset, the backend uses its deterministic local
+hash-embedding provider for development and tests.
 
 ## Staff
 
@@ -291,6 +391,32 @@ Prefix: `/api/v1/dealerships/{dealership_id}/staff`
 
 Deactivates the staff member. `400` if an admin attempts to remove themselves; `409` if it would remove the last active admin.
 
+## Customer Leads
+
+Prefix: `/api/v1/dealerships/{dealership_id}/leads`
+
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| POST | `` | Public or optional Bearer | Capture a consented inquiry |
+| GET | `` | Staff | List dealership leads; optional `status`, `limit` (1–500), and `offset` |
+| PATCH | `/{lead_id}` | Staff | Update pipeline status, active staff assignment, and/or follow-up time |
+| POST | `/{lead_id}/convert` | Staff | Link a matching test-drive booking and set `test_drive_scheduled` |
+
+`POST /leads` requires `name`, `email`, `message`, and
+`consent_to_contact: true`. `phone` and `requested_vehicle_id` are optional.
+The source is one of `website`, `assistant`, `phone`, `walk_in`, or `referral`.
+The server records the consent timestamp. If an authenticated customer submits
+the inquiry, the email must match that account.
+
+`PATCH /leads/{lead_id}` accepts statuses `new`, `contacted`, `qualified`,
+`won`, `lost`, and `follow_up`; linking a booking is the only way to set
+`test_drive_scheduled`. Follow-up timestamps must include a timezone. Assignment
+is restricted to active staff belonging to the same dealership.
+
+`POST /leads/{lead_id}/convert` accepts `{ "booking_id": 42 }`. The booking must
+belong to the dealership, remain booked or completed, and have a customer email
+matching the lead. A booking can be linked to only one lead.
+
 ## Test Drives
 
 Prefix: `/api/v1/dealerships/{dealership_id}`
@@ -306,9 +432,12 @@ Prefix: `/api/v1/dealerships/{dealership_id}`
 | PATCH | `/test-drive-slots/{slot_id}` | Admin | Activate/deactivate a slot |
 | DELETE | `/test-drive-slots/{slot_id}` | Admin | Deactivate a slot |
 | GET | `/test-drive-slots/{slot_id}/bookings` | Bearer | List bookings for a slot |
-| GET | `/test-drive-bookings` | Customer | List the caller's bookings |
+| GET | `/test-drive-bookings` | Customer/Staff | List bookings (Customer: own; Staff: dealership-wide) |
+| GET | `/test-drive-bookings/{booking_id}` | Customer/Staff | Get booking details |
 | POST | `/test-drive-slots/{slot_id}/bookings` | Customer | Book a slot |
+| POST | `/test-drive-bookings/{booking_id}/reschedule` | Customer/Staff | Reschedule a booking |
 | DELETE | `/test-drive-bookings/{booking_id}` | Customer/Staff | Cancel a booking |
+| POST | `/test-drive-bookings/{booking_id}/cancel` | Customer/Staff | Cancel a booking (POST) |
 
 ### PUT `/test-drive-settings`
 
@@ -369,11 +498,28 @@ The slot's `booked_count` is incremented atomically under a row lock.
 
 ### GET `/test-drive-bookings`
 
-Customer only; returns the caller's bookings for the dealership, newest first.
+- Customers see only their own bookings for the dealership, newest first.
+- Authorized dealership staff (`dealership_admin`, `manager`, `sales_rep`) and `dealerdesk_admin` can view all bookings in the dealership with optional filters (`status`, `customer_id`, `vehicle_id`, `slot_id`).
 
-### DELETE `/test-drive-bookings/{booking_id}`
+### GET `/test-drive-bookings/{booking_id}`
 
-Cancels an active booking and decrements the slot's booked count. Customers may cancel only their own bookings; staff may cancel bookings in their dealership. Returns `204`.
+- Customers can access their own booking; unauthorized callers receive `404`.
+- Authorized dealership staff and `dealerdesk_admin` can view any booking in the dealership.
+
+### POST `/test-drive-bookings/{booking_id}/reschedule`
+
+Reschedules an active booking to a new valid test-drive slot.
+- Requires explicit confirmation (`confirmed: true`).
+- Authorized staff can reschedule any booking in their dealership.
+- Customer-facing rescheduling validates identity/contact: customer must own the booking, and optional `verification_email` must match the customer's account email.
+- Atomically decrements the old slot's `booked_count` and increments the new slot's `booked_count`.
+- Rejects full slots, inactive slots, or overlapping schedule conflicts with `409`.
+
+### DELETE `/test-drive-bookings/{booking_id}` & POST `/test-drive-bookings/{booking_id}/cancel`
+
+Cancels an active booking and decrements the slot's `booked_count`.
+- Customers may cancel their own bookings; optional `verification_email` must match customer's account email if provided.
+- Authorized staff may cancel bookings in their dealership without customer verification. Returns `204`.
 
 ## Response schemas
 
@@ -474,7 +620,38 @@ Cancels an active booking and decrements the slot's booked count. Customers may 
   "ends_at": "2026-11-17T14:30:00Z",
   "capacity": 1,
   "booked_count": 0,
+  "remaining_capacity": 1,
+  "is_available": true,
   "is_active": true
+}
+```
+
+### `TestDriveBookingRequest`
+
+```json
+{
+  "confirmed": true
+}
+```
+
+### `TestDriveRescheduleRequest`
+
+```json
+{
+  "new_slot_id": 78,
+  "verification_email": "customer@example.com",
+  "verification_phone": "+15550199",
+  "confirmed": true
+}
+```
+
+### `TestDriveCancellationRequest`
+
+```json
+{
+  "verification_email": "customer@example.com",
+  "verification_phone": "+15550199",
+  "reason": "Scheduling conflict"
 }
 ```
 
@@ -492,6 +669,171 @@ Cancels an active booking and decrements the slot's booked count. Customers may 
   "cancelled_at": null
 }
 ```
+
+## Dealership AI Assistant
+
+Prefix: `/api/v1/dealerships/{dealership_id}/assistant`
+
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| POST | `/chat` | Public / Bearer | Chat with the dealership-grounded AI assistant |
+
+### POST `/dealerships/{dealership_id}/assistant/chat`
+
+Customer or staff inquiry grounded in the dealership's live business context (profile, operating hours, active vehicle inventory, available test-drive slots, and semantic RAG knowledge chunks).
+
+Request:
+```json
+{
+  "message": "Do you have any 2024 Toyota Camrys available for a test drive this week?",
+  "session_id": "cust-session-abc-123"
+}
+```
+
+Response:
+```json
+{
+  "dealership_id": 1,
+  "dealership_name": "Apex Motors",
+  "response": "Hello! Yes, we currently have the 2024 Toyota Camry XSE available for test drives...",
+  "intent": "test_drive_booking",
+  "sources": [
+    {
+      "source": "Dealership Inventory",
+      "detail": "2024 Toyota Camry (Stock: STK-2024-001)"
+    }
+  ],
+  "session_id": "cust-session-abc-123",
+  "timestamp": "2026-11-20T23:59:00Z"
+}
+```
+
+## Audit Logs
+
+Prefix: `/api/v1/dealerships/{dealership_id}/audit-logs`
+
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| GET | `/` | Staff / Admin | Paginated security and activity audit log |
+
+Query Parameters:
+- `action`: Filter by action name (`LOGIN_SUCCESS`, `TEST_DRIVE_BOOKED`, etc.)
+- `resource_type`: Filter by target resource (`vehicle`, `test_drive_booking`, etc.)
+- `page`: Page number (default: 1)
+- `page_size`: Results per page (default: 50, max: 100)
+
+Response:
+```json
+{
+  "items": [
+    {
+      "id": 101,
+      "dealership_id": 1,
+      "actor_id": 5,
+      "actor_email": "admin@apexmotors.com",
+      "action": "VEHICLE_CREATED",
+      "resource_type": "vehicle",
+      "resource_id": "12",
+      "ip_address": "192.168.1.10",
+      "details": { "model": "Camry", "stock_number": "STK-2024-001" },
+      "created_at": "2026-11-20T23:50:00Z"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 50
+}
+```
+
+## Multi-Channel AI Adapters & Orchestration
+
+See [Multi-Channel AI Architecture](multi-channel-ai-architecture.md) for architectural details and security guarantees.
+
+### Orchestration Dispatch
+
+`POST /api/v1/orchestration/dispatch` (Public / Internal)
+
+Dispatches normalized inbound events across any channel to the appropriate agent persona (Sales Agent or CRM Assistant).
+
+```json
+{
+  "dealership_id": 1,
+  "channel": "website",
+  "channel_user_id": "web_session_abc",
+  "message": "Do you have any 2024 electric SUVs in stock?"
+}
+```
+
+### Website Channel
+
+`POST /api/v1/dealerships/{dealership_id}/channels/website/message` (Public)
+
+Inbound message turn for the customer chat widget. Returns structured outbound payload with text, quick-reply actions, vehicle cards, and available test-drive slots.
+
+### WhatsApp Business & Twilio Sandbox Channel
+
+- `GET /api/v1/dealerships/{dealership_id}/channels/whatsapp/webhook` (Public): Responds to Meta challenge verification (`hub.challenge`).
+- `POST /api/v1/dealerships/{dealership_id}/channels/whatsapp/webhook` (Public): Inbound Meta WhatsApp webhook. Validates `X-Hub-Signature-256`, de-duplicates messages (`wamid.*`), and returns interactive WhatsApp payloads.
+- `GET /api/v1/channels/whatsapp/webhook` (Public): Twilio WhatsApp health check endpoint confirming adapter operational status. (Alias: `/channels/whatsapp/webhook`)
+- `POST /api/v1/channels/whatsapp/webhook` (Public): Twilio WhatsApp inbound webhook. Accepts Form parameters (`From`, `Body`, `ProfileName`, `MessageSid`), routes conversation through the Customer Sales Agent, and responds with synchronous TwiML XML (`<Response><Message>...</Message></Response>`). (Alias: `/channels/whatsapp/webhook`)
+- `POST /api/v1/channels/whatsapp/status` (Public): Twilio WhatsApp delivery receipt callback (`MessageSid`, `MessageStatus`, `To`).
+
+### Voice Telephony Channel (Twilio Voice & Vapi Voice AI)
+
+- `POST /api/v1/dealerships/{dealership_id}/channels/voice/webhook` (Public): Inbound telephony speech recognition webhook. Normalizes spoken pricing and outputs valid XML TwiML (`<Response>`, `<Say>`, `<Gather>`).
+- `GET /api/v1/channels/vapi/webhook` (Public): Vapi voice channel adapter health check. (Alias: `/channels/vapi/webhook`)
+- `POST /api/v1/channels/vapi/webhook` (Public): Primary Vapi Server URL webhook. Handles dynamic `assistant-request`, executes real-time function tools (`search_inventory`, `get_vehicle_details`, `get_available_test_drive_slots`, `book_test_drive`, `get_dealership_info`, `capture_customer_lead`), and captures `end-of-call-report` into CRM leads and conversations. (Alias: `/channels/vapi/webhook`)
+- `GET /api/v1/channels/vapi/assistant-spec` (Public): Generates exportable Vapi assistant JSON schema with all function tool definitions and voice system prompt.
+- `POST /api/v1/channels/vapi/call` (Public / Staff): Initiates an autonomous outbound telephone call to a customer using the Vapi REST API.
+
+---
+
+## Customer Sales Agent & Verification
+
+Prefix: `/api/v1/dealerships/{dealership_id}/sales-agent`
+
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| `POST` | `/chat` | Public / Customer | Direct single turn with consultative Sales Agent |
+| `POST` | `/chat/stream` | Public / Customer | Server-Sent Events (SSE) streaming turn with Sales Agent |
+| `POST` | `/verification/initiate` | Public / Customer | Acquires 10m slot hold and issues single-use OTP |
+| `POST` | `/verification/confirm` | Public / Customer | Verifies OTP, provisions customer, and atomically books slot |
+| `POST` | `/slot-holds` | Public / Customer | Directly creates a 10-minute temporary slot hold lease |
+| `POST` | `/leads` | Public / Customer | Captures customer purchase interest as a CRM lead |
+| `GET` | `/conversations/{id}/messages` | Public / Customer | Returns persistent message turn history |
+
+### POST `/sales-agent/verification/initiate`
+
+```json
+{
+  "slot_id": 42,
+  "destination": "customer@example.com",
+  "channel": "website",
+  "customer_name": "Chloe Customer"
+}
+```
+
+- Returns `200` with `status: "otp_sent"` and `hold_token`.
+- Response is opaque: never discloses whether destination has an existing account.
+- Slot hold capacity check is enforced atomically via row locks.
+
+### POST `/sales-agent/verification/confirm`
+
+```json
+{
+  "hold_token": "hold_a1b2c3d4...",
+  "code": "123456",
+  "destination": "customer@example.com",
+  "channel": "website",
+  "customer_name": "Chloe Customer",
+  "confirmed": true
+}
+```
+
+- Enforces single-use cryptographic OTP verification with 3-attempt limit.
+- Provisions verified customer account (`CUSTOMER_ROLE`) if new, or links existing account.
+- Executes atomic booking with capacity validation and marks hold confirmed.
+- Returns `200` with `BookingVerificationConfirmResponse` containing `booking_id` and formatted confirmation message.
 
 ## Related documents
 

@@ -1,27 +1,36 @@
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import router as api_router
-from app.core.errors import ApplicationError, application_error_handler
-from app.db.base import Base
-from app.db.migrations import ensure_vehicle_brand_associations
+from app.core.config import get_settings
+from app.core.errors import register_exception_handlers
+from app.core.limiter import limiter
+from app.db.migrations import (
+    ensure_channel_and_hold_tables,
+    ensure_security_and_idempotency_tables,
+    ensure_vehicle_lifecycle_and_audit_columns,
+)
 from app.db.session import engine
-from app.models import TestDriveBooking
+from app.middleware.idempotency import IdempotencyMiddleware
+from app.middleware.logging import CorrelationIdMiddleware
+
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    Base.metadata.create_all(bind=engine)
-    ensure_vehicle_brand_associations(engine)
-    active_booking_index = next(
-        index
-        for index in TestDriveBooking.__table__.indexes
-        if index.name == "uq_test_drive_booking_active_customer"
-    )
-    active_booking_index.create(bind=engine, checkfirst=True)
-    print("Server is running", flush=True)
+    try:
+        ensure_security_and_idempotency_tables(engine)
+        ensure_channel_and_hold_tables(engine)
+        ensure_vehicle_lifecycle_and_audit_columns(engine)
+    except Exception as exc:
+        logger.warning("Startup schema verification notice: %s", exc)
+    logger.info("DealerDesk backend server started successfully")
     try:
         yield
     finally:
@@ -55,8 +64,41 @@ app = FastAPI(
     },
 )
 
-app.add_exception_handler(ApplicationError, application_error_handler)
+settings = get_settings()
+
+app.state.limiter = limiter
+
+# Middlewares
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_origin_regex=settings.cors_origin_regex,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.add_middleware(CorrelationIdMiddleware)
+app.add_middleware(IdempotencyMiddleware)
+
+# Exception handlers (centralized enterprise error envelope)
+register_exception_handlers(app)
+
+# API Routers
 app.include_router(api_router)
+
+# Also expose direct channel route aliases for webhook convenience
+from app.channels.vapi.router import router as direct_vapi_router
+from app.channels.whatsapp.router import router as direct_whatsapp_router
+app.include_router(
+    direct_whatsapp_router,
+    prefix="/channels/whatsapp",
+    tags=["WhatsApp Channel"],
+)
+app.include_router(
+    direct_vapi_router,
+    prefix="/channels/vapi",
+    tags=["Vapi Voice Channel"],
+)
 
 
 @app.get(

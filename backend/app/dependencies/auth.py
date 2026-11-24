@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 import jwt
-from fastapi import Depends
+from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -12,14 +12,26 @@ from app.repositories import auth_repository
 from app.services import auth_service
 
 
-bearer_scheme = HTTPBearer()
+bearer_scheme = HTTPBearer(auto_error=False)
+optional_bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> User:
-    token = credentials.credentials
+    token: str | None = None
+    if credentials is not None and credentials.credentials:
+        token = credentials.credentials
+    elif request.cookies.get("dd_access"):
+        token = request.cookies.get("dd_access")
+
+    if not token:
+        raise UnauthorizedError(
+            "Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     try:
         user_id, token_version = auth_service.get_access_token_identity(token)
     except (ValueError, TypeError, jwt.InvalidTokenError):
@@ -43,3 +55,13 @@ def get_current_user(
     if user is None:
         raise UnauthorizedError("User not found")
     return user
+
+
+def get_optional_current_user(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(optional_bearer_scheme),
+    db: Session = Depends(get_db),
+) -> User | None:
+    if credentials is None and not request.cookies.get("dd_access"):
+        return None
+    return get_current_user(request, credentials, db)

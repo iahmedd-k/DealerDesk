@@ -1,19 +1,62 @@
-from datetime import datetime
+from datetime import datetime, timezone
+from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
+    JSON,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
+    desc,
     text,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+
+if TYPE_CHECKING:
+    from app.models.user import User
+
+
+class KnowledgeDocument(Base):
+    __tablename__ = "knowledge_documents"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    dealership_id: Mapped[int] = mapped_column(
+        ForeignKey("dealerships.id", ondelete="CASCADE"), index=True
+    )
+    brand_id: Mapped[int | None] = mapped_column(
+        ForeignKey("brands.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    uploaded_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    filename: Mapped[str] = mapped_column(String(255))
+    media_type: Mapped[str] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(24), default="ready")
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    chunk_count: Mapped[int] = mapped_column(Integer)
+    embedding_model: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class KnowledgeChunk(Base):
+    __tablename__ = "knowledge_chunks"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("knowledge_documents.id", ondelete="CASCADE"), index=True
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer)
+    content: Mapped[str] = mapped_column(Text)
+    embedding: Mapped[list[float]] = mapped_column(JSON)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class Dealership(Base):
@@ -26,6 +69,16 @@ class Dealership(Base):
     address: Mapped[str | None] = mapped_column(String(255), nullable=True)
     timezone: Mapped[str] = mapped_column(String(64), default="UTC")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    subscription_plan: Mapped[str] = mapped_column(String(32), default="pro")
+    subscription_status: Mapped[str] = mapped_column(String(32), default="active")
+    monthly_price: Mapped[Decimal] = mapped_column(
+        Numeric(10, 2), default=Decimal("499.00")
+    )
+    max_brands: Mapped[int] = mapped_column(Integer, default=10)
+    max_vehicles: Mapped[int] = mapped_column(Integer, default=250)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
 
 
 class StaffInvitation(Base):
@@ -89,10 +142,76 @@ class Vehicle(Base):
     model_year: Mapped[int] = mapped_column(Integer)
     variant: Mapped[str | None] = mapped_column(String(120), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    price: Mapped[float] = mapped_column()
+    price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     stock_number: Mapped[str] = mapped_column(String(64))
     is_available: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(32), default="available", index=True)
     test_drive_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    images: Mapped[list["VehicleImage"]] = relationship(
+        back_populates="vehicle",
+        order_by="VehicleImage.position",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
+    status_history: Mapped[list["VehicleStatusHistory"]] = relationship(
+        back_populates="vehicle",
+        order_by="desc(VehicleStatusHistory.created_at)",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
+
+
+class VehicleImage(Base):
+    __tablename__ = "vehicle_images"
+    __table_args__ = (
+        UniqueConstraint(
+            "storage_path",
+            name="uq_vehicle_images_storage_path",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    dealership_id: Mapped[int] = mapped_column(
+        ForeignKey("dealerships.id", ondelete="CASCADE"), index=True
+    )
+    vehicle_id: Mapped[int] = mapped_column(
+        ForeignKey("vehicles.id", ondelete="CASCADE"), index=True
+    )
+    uploaded_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    storage_path: Mapped[str] = mapped_column(String(512))
+    public_url: Mapped[str] = mapped_column(String(1024))
+    media_type: Mapped[str] = mapped_column(String(32))
+    alt_text: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    position: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    vehicle: Mapped[Vehicle] = relationship(back_populates="images")
+
+
+class VehicleStatusHistory(Base):
+    __tablename__ = "vehicle_status_history"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    dealership_id: Mapped[int] = mapped_column(
+        ForeignKey("dealerships.id", ondelete="CASCADE"), index=True
+    )
+    vehicle_id: Mapped[int] = mapped_column(
+        ForeignKey("vehicles.id", ondelete="CASCADE"), index=True
+    )
+    changed_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    previous_status: Mapped[str] = mapped_column(String(32))
+    new_status: Mapped[str] = mapped_column(String(32), index=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+    )
+
+    vehicle: Mapped[Vehicle] = relationship(back_populates="status_history")
+    changed_by_user: Mapped["User"] = relationship(foreign_keys=[changed_by_user_id], lazy="joined")
 
 
 class TestDriveSettings(Base):
@@ -152,3 +271,98 @@ class TestDriveBooking(Base):
     cancelled_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    customer: Mapped["User"] = relationship(
+        "User",
+        foreign_keys=[customer_id],
+        lazy="selectin",
+    )
+    slot: Mapped[TestDriveSlot] = relationship(
+        TestDriveSlot,
+        foreign_keys=[slot_id],
+        lazy="selectin",
+    )
+    vehicle: Mapped[Vehicle] = relationship(
+        Vehicle,
+        foreign_keys=[vehicle_id],
+        lazy="selectin",
+    )
+
+    @property
+    def customer_name(self) -> str | None:
+        return self.customer.name if self.customer else None
+
+    @property
+    def customer_email(self) -> str | None:
+        return self.customer.email if self.customer else None
+
+    @property
+    def vehicle_name(self) -> str | None:
+        if self.vehicle is None:
+            return None
+        return f"{self.vehicle.model_year} {self.vehicle.make} {self.vehicle.model}"
+
+    @property
+    def starts_at(self) -> datetime | None:
+        return self.slot.starts_at if self.slot else None
+
+    @property
+    def ends_at(self) -> datetime | None:
+        return self.slot.ends_at if self.slot else None
+
+
+class CustomerLead(Base):
+    __tablename__ = "customer_leads"
+    __table_args__ = (
+        Index("ix_customer_leads_dealership_status", "dealership_id", "status"),
+        Index(
+            "ix_customer_leads_dealership_assignee",
+            "dealership_id",
+            "assigned_to_user_id",
+        ),
+        UniqueConstraint(
+            "test_drive_booking_id",
+            name="uq_customer_leads_test_drive_booking",
+        ),
+        CheckConstraint(
+            "status IN ('new', 'contacted', 'qualified', 'test_drive_scheduled', "
+            "'won', 'lost', 'follow_up')",
+            name="ck_customer_leads_status",
+        ),
+        CheckConstraint(
+            "NOT consent_to_contact OR consented_at IS NOT NULL",
+            name="ck_customer_leads_consent_timestamp",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    dealership_id: Mapped[int] = mapped_column(
+        ForeignKey("dealerships.id", ondelete="CASCADE"), index=True
+    )
+    customer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    requested_vehicle_id: Mapped[int | None] = mapped_column(
+        ForeignKey("vehicles.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    assigned_to_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    test_drive_booking_id: Mapped[int | None] = mapped_column(
+        ForeignKey("test_drive_bookings.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    name: Mapped[str] = mapped_column(String(100))
+    email: Mapped[str] = mapped_column(String(320), index=True)
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    message: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(24), default="website")
+    status: Mapped[str] = mapped_column(String(24), default="new")
+    consent_to_contact: Mapped[bool] = mapped_column(Boolean, default=False)
+    consented_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    next_follow_up_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

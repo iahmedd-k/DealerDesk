@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.authorization import ensure_dealership_access, ensure_role
+from app.core.authorization import ensure_dealership_role_access
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.core.roles import (
     CUSTOMER_ROLE,
@@ -28,8 +28,11 @@ def list_staff(
     dealership_id: int,
     current_user: User,
 ) -> list[User]:
-    ensure_dealership_access(current_user, dealership_id)
-    ensure_role(current_user, *DEALERSHIP_MANAGEMENT_ROLES)
+    ensure_dealership_role_access(
+        current_user,
+        dealership_id,
+        *DEALERSHIP_MANAGEMENT_ROLES,
+    )
     return staff_repository.list_staff(db, dealership_id)
 
 
@@ -39,12 +42,13 @@ def invite_staff(
     current_user: User,
     payload: StaffInvitationRequest,
 ) -> StaffInvitationResponse:
-    ensure_dealership_access(current_user, dealership_id)
-    ensure_role(current_user, DEALERSHIP_ADMIN_ROLE)
+    ensure_dealership_role_access(current_user, dealership_id, DEALERSHIP_ADMIN_ROLE)
 
     email = str(payload.email).lower()
     now = datetime.now(timezone.utc)
     temporary_password = secrets.token_urlsafe(16)
+    raw_activation_token = secrets.token_urlsafe(48)
+    activation_token_hash = auth_service.hash_token(raw_activation_token)
     invited_user = user_repository.get_by_email(db, email)
     invitation: StaffInvitation
     try:
@@ -78,7 +82,7 @@ def invite_staff(
             invitation.invited_by_user_id = current_user.id
             invitation.email = email
             invitation.role = payload.role
-            invitation.activation_token = secrets.token_urlsafe(48)
+            invitation.activation_token = activation_token_hash
             invitation.expires_at = now + timedelta(days=2)
             invitation.accepted_at = None
             invitation.revoked_at = None
@@ -92,7 +96,7 @@ def invite_staff(
                 email=email,
                 role=payload.role,
                 password=auth_service.hash_password(temporary_password),
-                activation_token=secrets.token_urlsafe(48),
+                activation_token=activation_token_hash,
                 expires_at=now + timedelta(days=2),
             )
     except IntegrityError as exc:
@@ -104,7 +108,7 @@ def invite_staff(
         recipient=invitation.email,
         dealership_name=dealership.name if dealership else "your dealership",
         temporary_password=temporary_password,
-        activation_token=invitation.activation_token,
+        activation_token=raw_activation_token,
     )
     return StaffInvitationResponse(
         id=invitation.id,
@@ -124,8 +128,7 @@ def update_staff(
     current_user: User,
     payload: StaffUpdateRequest,
 ) -> User:
-    ensure_dealership_access(current_user, dealership_id)
-    ensure_role(current_user, DEALERSHIP_ADMIN_ROLE)
+    ensure_dealership_role_access(current_user, dealership_id, DEALERSHIP_ADMIN_ROLE)
     user = _get_staff_user(db, dealership_id, user_id)
     if (
         user.role == DEALERSHIP_ADMIN_ROLE
@@ -148,8 +151,11 @@ def list_invitations(
     dealership_id: int,
     current_user: User,
 ) -> list[StaffInvitationResponse]:
-    ensure_dealership_access(current_user, dealership_id)
-    ensure_role(current_user, *DEALERSHIP_MANAGEMENT_ROLES)
+    ensure_dealership_role_access(
+        current_user,
+        dealership_id,
+        *DEALERSHIP_MANAGEMENT_ROLES,
+    )
     invitations = staff_repository.list_invitations(db, dealership_id)
     return [
         StaffInvitationResponse(
@@ -171,8 +177,7 @@ def revoke_invitation(
     invitation_id: int,
     current_user: User,
 ) -> None:
-    ensure_dealership_access(current_user, dealership_id)
-    ensure_role(current_user, DEALERSHIP_ADMIN_ROLE)
+    ensure_dealership_role_access(current_user, dealership_id, DEALERSHIP_ADMIN_ROLE)
     invitation = staff_repository.get_invitation(db, dealership_id, invitation_id)
     if invitation is None:
         raise NotFoundError("Invitation not found")
@@ -195,8 +200,7 @@ def remove_staff(
     user_id: int,
     current_user: User,
 ) -> None:
-    ensure_dealership_access(current_user, dealership_id)
-    ensure_role(current_user, DEALERSHIP_ADMIN_ROLE)
+    ensure_dealership_role_access(current_user, dealership_id, DEALERSHIP_ADMIN_ROLE)
     user = _get_staff_user(db, dealership_id, user_id)
     if user.id == current_user.id:
         raise BadRequestError("A dealership admin cannot remove themselves")
@@ -214,8 +218,11 @@ def get_staff(
     user_id: int,
     current_user: User,
 ) -> User:
-    ensure_dealership_access(current_user, dealership_id)
-    ensure_role(current_user, *DEALERSHIP_MANAGEMENT_ROLES)
+    ensure_dealership_role_access(
+        current_user,
+        dealership_id,
+        *DEALERSHIP_MANAGEMENT_ROLES,
+    )
     return _get_staff_user(db, dealership_id, user_id)
 
 

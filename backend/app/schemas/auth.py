@@ -42,7 +42,15 @@ class TokenResponse(BaseModel):
 
 
 class RefreshTokenRequest(BaseModel):
-    refresh_token: str = Field(min_length=32, max_length=128)
+    refresh_token: str | None = Field(default=None, min_length=32, max_length=128)
+
+
+class VerifyEmailRequest(BaseModel):
+    token: str = Field(min_length=32, max_length=128)
+
+
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
 
 
 class PasswordResetRequest(BaseModel):

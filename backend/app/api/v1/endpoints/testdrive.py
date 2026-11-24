@@ -3,7 +3,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.core.roles import DEALERSHIP_ADMIN_ROLE
+from app.core.roles import DEALERSHIP_ADMIN_ROLE, STAFF_ROLES
 from app.db.session import get_db
 from app.dependencies.auth import get_current_user
 from app.dependencies.workspace import require_dealership_roles
@@ -14,7 +14,10 @@ from app.models.workspace import (
     TestDriveSlot,
 )
 from app.schemas.workspace import (
+    TestDriveBookingRequest,
     TestDriveBookingResponse,
+    TestDriveCancellationRequest,
+    TestDriveRescheduleRequest,
     TestDriveSettingsRequest,
     TestDriveSettingsResponse,
     TestDriveSlotResponse,
@@ -32,6 +35,9 @@ router = APIRouter(
 @router.get("/test-drive-settings", response_model=TestDriveSettingsResponse)
 def get_test_drive_settings(
     dealership_id: int,
+    current_user: User = Depends(
+        require_dealership_roles(*STAFF_ROLES)
+    ),
     db: Session = Depends(get_db),
 ) -> TestDriveSettings:
     return test_drive_service.get_settings(db, dealership_id)
@@ -90,12 +96,20 @@ def delete_test_drive_settings(
 @router.get("/test-drive-slots", response_model=list[TestDriveSlotResponse])
 def list_test_drive_slots(
     dealership_id: int,
-    include_inactive: bool = False,
+    vehicle_id: int | None = Query(default=None),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    available_only: bool = Query(default=False),
+    include_inactive: bool = Query(default=False),
     db: Session = Depends(get_db),
 ) -> list[TestDriveSlot]:
     return test_drive_service.list_slots(
         db,
         dealership_id,
+        vehicle_id=vehicle_id,
+        start_date=start_date,
+        end_date=end_date,
+        available_only=available_only,
         include_inactive=include_inactive,
     )
 
@@ -144,7 +158,7 @@ def delete_test_drive_slot(
     "/test-drive-slots/{slot_id}/bookings",
     response_model=list[TestDriveBookingResponse],
 )
-def list_bookings(
+def list_slot_bookings(
     dealership_id: int,
     slot_id: int,
     current_user: User = Depends(get_current_user),
@@ -159,14 +173,40 @@ def list_bookings(
 
 
 @router.get("/test-drive-bookings", response_model=list[TestDriveBookingResponse])
-def list_customer_bookings(
+def list_test_drive_bookings(
     dealership_id: int,
+    status: str | None = None,
+    customer_id: int | None = None,
+    vehicle_id: int | None = None,
+    slot_id: int | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[TestDriveBooking]:
-    return test_drive_service.list_customer_bookings(
+    return test_drive_service.list_bookings(
         db,
         dealership_id,
+        current_user,
+        status=status,
+        customer_id=customer_id,
+        vehicle_id=vehicle_id,
+        slot_id=slot_id,
+    )
+
+
+@router.get(
+    "/test-drive-bookings/{booking_id}",
+    response_model=TestDriveBookingResponse,
+)
+def get_booking(
+    dealership_id: int,
+    booking_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TestDriveBooking:
+    return test_drive_service.get_booking(
+        db,
+        dealership_id,
+        booking_id,
         current_user,
     )
 
@@ -179,16 +219,40 @@ def list_customer_bookings(
 def book_test_drive(
     dealership_id: int,
     slot_id: int,
+    payload: TestDriveBookingRequest | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TestDriveBooking:
-    return test_drive_service.book_slot(db, dealership_id, slot_id, current_user)
+    return test_drive_service.book_slot(
+        db, dealership_id, slot_id, current_user, payload=payload
+    )
+
+
+@router.post(
+    "/test-drive-bookings/{booking_id}/reschedule",
+    response_model=TestDriveBookingResponse,
+)
+def reschedule_test_drive(
+    dealership_id: int,
+    booking_id: int,
+    payload: TestDriveRescheduleRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TestDriveBooking:
+    return test_drive_service.reschedule_booking(
+        db,
+        dealership_id,
+        booking_id,
+        payload,
+        current_user,
+    )
 
 
 @router.delete("/test-drive-bookings/{booking_id}", status_code=204)
 def cancel_test_drive(
     dealership_id: int,
     booking_id: int,
+    verification_email: str | None = Query(default=None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> None:
@@ -197,4 +261,22 @@ def cancel_test_drive(
         dealership_id,
         booking_id,
         current_user,
+        verification_email=verification_email,
+    )
+
+
+@router.post("/test-drive-bookings/{booking_id}/cancel", status_code=204)
+def cancel_test_drive_post(
+    dealership_id: int,
+    booking_id: int,
+    payload: TestDriveCancellationRequest | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    test_drive_service.cancel_booking(
+        db,
+        dealership_id,
+        booking_id,
+        current_user,
+        payload=payload,
     )

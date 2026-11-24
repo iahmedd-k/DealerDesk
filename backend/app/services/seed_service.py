@@ -1,6 +1,10 @@
 from sqlalchemy.orm import Session
 
-from app.core.roles import CUSTOMER_ROLE, DEALERSHIP_ADMIN_ROLE
+from app.core.roles import (
+    CUSTOMER_ROLE,
+    DEALERDESK_ADMIN_ROLE,
+    DEALERSHIP_ADMIN_ROLE,
+)
 from app.models.user import User
 from app.models.workspace import Dealership
 from app.repositories import seed_repository, user_repository
@@ -17,7 +21,10 @@ def seed_demo_users(
     dealership_business_email: str,
     dealership_admin_email: str,
     dealership_admin_password: str,
-) -> tuple[User, User]:
+    dealerdesk_admin_name: str = "DealerDesk Admin",
+    dealerdesk_admin_email: str = "dealerdesk@demo.com",
+    dealerdesk_admin_password: str = "adminadmin",
+) -> tuple[User, User, User]:
     dealership = _get_or_create_dealership(
         db,
         dealership_name,
@@ -38,8 +45,22 @@ def seed_demo_users(
         role=DEALERSHIP_ADMIN_ROLE,
         dealership_id=dealership.id,
     )
-    seed_repository.save(db, dealership, customer, dealership_admin)
-    return customer, dealership_admin
+    dealerdesk_admin = _refresh_user(
+        db,
+        name=dealerdesk_admin_name,
+        email=dealerdesk_admin_email,
+        password=dealerdesk_admin_password,
+        role=DEALERDESK_ADMIN_ROLE,
+        dealership_id=None,
+    )
+    seed_repository.save(
+        db,
+        dealership,
+        customer,
+        dealership_admin,
+        dealerdesk_admin,
+    )
+    return customer, dealership_admin, dealerdesk_admin
 
 
 def _get_or_create_dealership(

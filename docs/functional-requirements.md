@@ -12,47 +12,47 @@ are adapter-based extensions.
 
 | Actor | Responsibilities |
 | --- | --- |
-| Platform administrator | Creates dealerships, manages platform configuration, monitors health |
-| Dealership administrator | Manages dealership, staff, brands, inventory, agents, knowledge, and reporting |
-| Manager | Assigns leads, manages bookings, monitors conversations and workflows |
-| Sales representative | Works assigned leads, updates status, manages test drives, takes over conversations |
-| Customer | Asks questions, receives recommendations, submits contact details, and books or changes test drives |
+| Platform administrator (`dealerdesk_admin`) | Manages all dealerships/workspaces across the platform, monitors system health, global user inspection |
+| Dealership administrator (`dealership_admin`) | Manages dealership workspace, staff, brands, inventory, agents, knowledge, and reporting |
+| Manager (`manager`) | Assigns leads, manages bookings, monitors conversations and workflows |
+| Sales representative (`sales_rep`) | Works assigned leads, updates status, manages test drives, takes over conversations |
+| Customer (`customer`) | Asks questions, receives recommendations, submits contact details, and books/reschedules/cancels test drives |
 
 ## 3. Functional requirements
 
 ### Identity, tenancy, and catalog
 
-| ID | Requirement | Acceptance statement |
-| --- | --- | --- |
-| FR-001 | Authentication and roles | Users can sign in and receive access appropriate to `platform_admin`, `dealership_admin`, `manager`, or `sales_rep`. |
-| FR-002 | Dealership workspace | Authorized dealership administrators can view and update profile, contact details, business hours, and supported channels. |
-| FR-003 | Brand and vehicle catalog | Staff can manage brands, models, model years, variants, specifications, features, and published vehicle content. |
-| FR-004 | Inventory management | Staff can add stock units and update status among `available`, `reserved`, `sold`, and `unavailable`; each change is recorded. |
+| ID | Requirement | Acceptance statement | Status |
+| --- | --- | --- | --- |
+| FR-001 | Authentication and roles | Users can sign in and receive access appropriate to `dealerdesk_admin`, `dealership_admin`, `manager`, `sales_rep`, or `customer`. | **Implemented** |
+| FR-002 | Dealership workspace | Authorized dealership administrators can view and update profile, contact details, business hours, and supported channels. Platform admin can list all workspaces. | **Implemented** |
+| FR-003 | Brand and vehicle catalog | Staff can manage brands, models, model years, variants, specifications, features, published vehicle content, and ordered vehicle images. | **Implemented** |
+| FR-004 | Inventory management | Staff can add stock units and update status among `available`, `reserved`, `sold`, and `unavailable`; each change is recorded. | **Partially implemented** — availability is a boolean; lifecycle states/history are not yet modeled. |
 
 ### Knowledge and conversations
 
-| ID | Requirement | Acceptance statement |
-| --- | --- | --- |
-| FR-005 | Knowledge ingestion | Authorized staff can upload supported text/PDF documents; the system extracts, chunks, embeds, and indexes them by dealership and brand. |
-| FR-006 | Knowledge retrieval | Agents retrieve relevant chunks with source metadata; factual vehicle answers use retrieved content or structured catalog data. |
-| FR-007 | Conversation channels | Website chat is supported in MVP; WhatsApp and voice use defined adapters. Messages store channel, external identifiers, and timestamps. |
-| FR-008 | Conversation continuity | Conversation history and customer context can resume; cross-channel association requires a reliable identifier or explicit matching. |
-| FR-009 | Intent routing | A router identifies intent and brand/model, routes to the right specialist, and asks for clarification when ambiguous. |
-| FR-010 | Brand-scoped agents | Each agent can access only its authorized dealership and brand knowledge/tools; brand content must not be mixed. |
-| FR-011 | Agent tool calling | Agents can call approved tools for catalog search, inventory, lead creation, slot lookup, booking, and escalation. |
-| FR-012 | Vehicle search and recommendation | Customers can search or receive recommendations by brand, model, budget, and preferences using backend data. |
+| ID | Requirement | Acceptance statement | Status |
+| --- | --- | --- | --- |
+| FR-005 | Knowledge ingestion | Authorized staff can upload supported text/PDF documents; the system extracts, chunks, embeds, and indexes them by dealership and brand. | **Implemented** |
+| FR-006 | Knowledge retrieval | Agents retrieve relevant chunks with source metadata; factual vehicle answers use retrieved content or structured catalog data. | **Implemented** |
+| FR-007 | Conversation channels | Website chat is supported in MVP; WhatsApp and voice use defined adapters. Messages store channel, external identifiers, and timestamps. | Planned |
+| FR-008 | Conversation continuity | Conversation history and customer context can resume; cross-channel association requires a reliable identifier or explicit matching. | Planned |
+| FR-009 | Intent routing | A router identifies intent and brand/model, routes to the right specialist, and asks for clarification when ambiguous. | Planned |
+| FR-010 | Brand-scoped agents | Each agent can access only its authorized dealership and brand knowledge/tools; brand content must not be mixed. | Planned |
+| FR-011 | Agent tool calling | Agents can call approved tools for catalog search, inventory, lead creation, slot lookup, booking, and escalation. | Planned |
+| FR-012 | Vehicle search and recommendation | Customers can search or receive recommendations by brand, model, budget, and preferences using backend data. | Planned |
 
 ### Leads and test drives
 
-| ID | Requirement | Acceptance statement |
-| --- | --- | --- |
-| FR-013 | Lead capture | With consent, the system creates a lead containing contact details, vehicle interest, budget, timeline, channel, and conversation reference. |
-| FR-014 | Lead management | Staff can view, assign, filter, and update lead status: `new`, `contacted`, `qualified`, `test_drive_scheduled`, `won`, `lost`, or `follow_up`. |
-| FR-015 | Lead assignment | Managers can assign leads manually; configurable brand or round-robin rules can assign new leads to available representatives. |
-| FR-016 | Test-drive availability | The backend exposes slots based on business hours, capacity, and existing bookings. |
-| FR-017 | Test-drive booking | Customers book only after explicit confirmation; backend validation prevents over-capacity and double booking. |
-| FR-018 | Booking management | Authorized staff can view, reschedule, and cancel bookings. Customer changes use demo-appropriate identity/contact verification. |
-| FR-019 | Human handoff | Customers can request a human; low confidence, repeated failure, complaints, and policy triggers preserve the transcript and create/update a callback task. |
+| ID | Requirement | Acceptance statement | Status |
+| --- | --- | --- | --- |
+| FR-013 | Lead capture | With consent, the system creates a lead containing contact details, vehicle interest, budget, timeline, channel, and conversation reference. | **Partially implemented** — the assistant follow-up form stores name, email, optional phone/vehicle, inquiry, channel, and consent; budget, timeline, and persistent conversation linkage remain missing. |
+| FR-014 | Lead management | Staff can view, assign, filter, and update lead status: `new`, `contacted`, `qualified`, `test_drive_scheduled`, `won`, `lost`, or `follow_up`. | **Partially implemented** — dealership-scoped list, status filters, assignment, follow-up time, and booking linkage are available; richer CRM history and pagination metadata remain missing. |
+| FR-015 | Lead assignment | Managers can assign leads manually; configurable brand or round-robin rules can assign new leads to available representatives. | **Partially implemented** — manual assignment to active dealership staff is supported; automated assignment rules are not. |
+| FR-016 | Test-drive availability | The backend exposes slots based on business hours, capacity, and existing bookings. Supports query filters by vehicle, date range, and availability. | **Implemented** |
+| FR-017 | Test-drive booking | Customers book only after explicit confirmation; backend concurrency validation prevents over-capacity, double booking, and overlapping times. | **Implemented** |
+| FR-018 | Booking management | Authorized staff can view, reschedule, and cancel bookings across the dealership. Customer changes use demo-appropriate identity/contact verification. | **Implemented** |
+| FR-019 | Human handoff | Customers can request a human; low confidence, repeated failure, complaints, and policy triggers preserve the transcript and create/update a callback task. | Planned |
 
 ### Events and automation
 
@@ -81,13 +81,13 @@ are adapter-based extensions.
 
 ### Inquiry to lead
 
-1. Customer starts website chat or WhatsApp.
+1. Customer starts website chat (WhatsApp remains planned).
 2. Router identifies intent and brand/model or asks a clarification.
 3. Brand agent retrieves approved content and structured catalog data.
 4. Availability and price come from backend tools, never model guesses.
-5. Agent asks qualification questions.
-6. After consent, backend creates the lead and returns a reference.
-7. Conversation and customer context remain available to staff.
+5. Customer can request a dealership follow-up and enter contact details.
+6. After explicit contact consent, backend creates a dealership-scoped lead.
+7. Staff can assign the lead, set status/follow-up, and link a matching test-drive booking. Conversation persistence and association remain planned.
 
 ### Lead to test drive
 

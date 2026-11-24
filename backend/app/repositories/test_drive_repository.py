@@ -1,8 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.user import User
 from app.models.workspace import (
     Brand,
     TestDriveBooking,
@@ -49,6 +50,10 @@ def list_slots(
     db: Session,
     dealership_id: int,
     *,
+    vehicle_id: int | None = None,
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
+    available_only: bool = False,
     include_inactive: bool = False,
 ) -> list[TestDriveSlot]:
     query = select(TestDriveSlot).where(
@@ -56,6 +61,19 @@ def list_slots(
     )
     if not include_inactive:
         query = query.where(TestDriveSlot.is_active.is_(True))
+    if vehicle_id is not None:
+        query = query.where(TestDriveSlot.vehicle_id == vehicle_id)
+    if start_at is not None:
+        query = query.where(TestDriveSlot.starts_at >= start_at)
+    if end_at is not None:
+        query = query.where(TestDriveSlot.starts_at < end_at)
+    if available_only:
+        now = datetime.now(timezone.utc)
+        query = query.where(
+            TestDriveSlot.booked_count < TestDriveSlot.capacity,
+            TestDriveSlot.starts_at > now,
+            TestDriveSlot.is_active.is_(True),
+        )
     return list(db.scalars(query.order_by(TestDriveSlot.starts_at)))
 
 
@@ -143,6 +161,29 @@ def list_bookings_for_slot(
     return list(db.scalars(query.order_by(TestDriveBooking.created_at)))
 
 
+def list_bookings(
+    db: Session,
+    dealership_id: int,
+    *,
+    customer_id: int | None = None,
+    vehicle_id: int | None = None,
+    slot_id: int | None = None,
+    status: str | None = None,
+) -> list[TestDriveBooking]:
+    query = select(TestDriveBooking).where(
+        TestDriveBooking.dealership_id == dealership_id
+    )
+    if customer_id is not None:
+        query = query.where(TestDriveBooking.customer_id == customer_id)
+    if vehicle_id is not None:
+        query = query.where(TestDriveBooking.vehicle_id == vehicle_id)
+    if slot_id is not None:
+        query = query.where(TestDriveBooking.slot_id == slot_id)
+    if status is not None:
+        query = query.where(TestDriveBooking.status == status)
+    return list(db.scalars(query.order_by(TestDriveBooking.created_at.desc())))
+
+
 def list_customer_bookings(
     db: Session,
     dealership_id: int,
@@ -168,6 +209,14 @@ def get_brand(db: Session, brand_id: int) -> Brand | None:
     return db.get(Brand, brand_id)
 
 
+def lock_customer(db: Session, customer_id: int) -> None:
+    db.scalar(
+        select(User.id)
+        .where(User.id == customer_id)
+        .with_for_update()
+    )
+
+
 def has_booking(
     db: Session,
     slot_id: int,
@@ -183,6 +232,29 @@ def has_booking(
         )
         is not None
     )
+
+
+def has_overlapping_booking(
+    db: Session,
+    customer_id: int,
+    starts_at: datetime,
+    ends_at: datetime,
+    *,
+    exclude_slot_id: int | None = None,
+) -> bool:
+    query = (
+        select(TestDriveBooking.id)
+        .join(TestDriveSlot, TestDriveBooking.slot_id == TestDriveSlot.id)
+        .where(
+            TestDriveBooking.customer_id == customer_id,
+            TestDriveBooking.status == "booked",
+            TestDriveSlot.starts_at < ends_at,
+            TestDriveSlot.ends_at > starts_at,
+        )
+    )
+    if exclude_slot_id is not None:
+        query = query.where(TestDriveBooking.slot_id != exclude_slot_id)
+    return db.scalar(query) is not None
 
 
 def get_booking(
