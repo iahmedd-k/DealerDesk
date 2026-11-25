@@ -363,3 +363,122 @@ def ensure_vehicle_lifecycle_and_audit_columns(engine: Engine) -> None:
                 "CREATE INDEX IF NOT EXISTS ix_vehicle_status_history_dealership_id ON vehicle_status_history (dealership_id)"
             )
         )
+
+
+def ensure_crm_lead_enhancements(engine: Engine) -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE customer_leads ADD COLUMN IF NOT EXISTS budget NUMERIC(12, 2)")
+        )
+        connection.execute(
+            text("ALTER TABLE customer_leads ADD COLUMN IF NOT EXISTS purchase_timeline VARCHAR(64)")
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE customer_leads ADD COLUMN IF NOT EXISTS conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL"
+            )
+        )
+        connection.execute(
+            text("ALTER TABLE customer_leads ADD COLUMN IF NOT EXISTS preferences JSONB")
+        )
+        connection.execute(
+            text("ALTER TABLE customer_leads ADD COLUMN IF NOT EXISTS deal_value NUMERIC(12, 2)")
+        )
+        connection.execute(
+            text("ALTER TABLE customer_leads ADD COLUMN IF NOT EXISTS deal_notes TEXT")
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS lead_activities (
+                    id SERIAL PRIMARY KEY,
+                    dealership_id INTEGER NOT NULL REFERENCES dealerships(id) ON DELETE CASCADE,
+                    lead_id INTEGER NOT NULL REFERENCES customer_leads(id) ON DELETE CASCADE,
+                    actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    activity_type VARCHAR(32) NOT NULL,
+                    summary TEXT NOT NULL,
+                    details JSONB,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_lead_activities_lead_created ON lead_activities (lead_id, created_at)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_lead_activities_dealership_id ON lead_activities (dealership_id)"
+            )
+        )
+
+
+def ensure_notification_ledger_table(engine: Engine) -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS notification_deliveries (
+                    id SERIAL PRIMARY KEY,
+                    dealership_id INTEGER NOT NULL REFERENCES dealerships(id) ON DELETE CASCADE,
+                    booking_id INTEGER REFERENCES test_drive_bookings(id) ON DELETE CASCADE,
+                    notification_type VARCHAR(48) NOT NULL,
+                    channel VARCHAR(24) NOT NULL DEFAULT 'email',
+                    recipient VARCHAR(320) NOT NULL,
+                    status VARCHAR(32) NOT NULL,
+                    error_message TEXT,
+                    sent_at TIMESTAMP WITH TIME ZONE,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    CONSTRAINT uq_notification_booking_type UNIQUE (booking_id, notification_type)
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_notification_deliveries_dealership ON notification_deliveries (dealership_id, created_at)"
+            )
+        )
+
+
+def ensure_governance_and_outbox_tables(engine: Engine) -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_available BOOLEAN NOT NULL DEFAULT TRUE")
+        )
+        connection.execute(
+            text("ALTER TABLE users ADD COLUMN IF NOT EXISTS availability_note VARCHAR(255)")
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS outbox_events (
+                    id SERIAL PRIMARY KEY,
+                    dealership_id INTEGER NOT NULL REFERENCES dealerships(id) ON DELETE CASCADE,
+                    event_type VARCHAR(64) NOT NULL,
+                    aggregate_type VARCHAR(48) NOT NULL,
+                    aggregate_id VARCHAR(64) NOT NULL,
+                    payload JSONB NOT NULL,
+                    target_webhook_url VARCHAR(500),
+                    status VARCHAR(24) NOT NULL DEFAULT 'pending',
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT,
+                    next_retry_at TIMESTAMP WITH TIME ZONE,
+                    delivered_at TIMESTAMP WITH TIME ZONE,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_outbox_events_dealership_status ON outbox_events (dealership_id, status)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_outbox_events_status_retry ON outbox_events (status, next_retry_at)"
+            )
+        )

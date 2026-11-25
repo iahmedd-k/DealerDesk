@@ -29,6 +29,9 @@ get_settings.cache_clear()
 
 from app.db.base import Base  # noqa: E402
 from app.db.migrations import (  # noqa: E402
+    ensure_crm_lead_enhancements,
+    ensure_governance_and_outbox_tables,
+    ensure_notification_ledger_table,
     ensure_security_and_idempotency_tables,
     ensure_vehicle_lifecycle_and_audit_columns,
 )
@@ -67,6 +70,9 @@ def reset_database(request: pytest.FixtureRequest) -> Iterator[None]:
     Base.metadata.create_all(bind=engine)
     ensure_security_and_idempotency_tables(engine)
     ensure_vehicle_lifecycle_and_audit_columns(engine)
+    ensure_crm_lead_enhancements(engine)
+    ensure_notification_ledger_table(engine)
+    ensure_governance_and_outbox_tables(engine)
     yield
     _reset_test_schema()
 

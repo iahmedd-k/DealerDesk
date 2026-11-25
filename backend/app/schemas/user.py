@@ -9,6 +9,8 @@ class UserResponse(BaseModel):
     dealership_id: int | None = Field(default=None)
     is_active: bool = Field(default=True)
     must_change_password: bool = Field(default=False)
+    is_available: bool = Field(default=True)
+    availability_note: str | None = Field(default=None)
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -14,6 +14,7 @@ import {
   Building2,
   LogOut,
   Layers,
+  MessageSquare,
 } from "lucide-react";
 import { ApiError, api } from "../api";
 import { useAuth } from "../providers";
@@ -125,6 +126,7 @@ export default function Shell({ children }: ShellProps) {
               { href: "/inventory", label: "Vehicle Inventory", icon: Car },
               { href: "/bookings", label: "Test Drives & CRM", icon: Calendar },
               { href: "/leads", label: "Customer Leads", icon: Users },
+              { href: "/inbox", label: "Conversation Inbox", icon: MessageSquare },
               ...(["dealership_admin", "manager"].includes(user.role)
                 ? [{ href: "/brands", label: "Multi-Brand Portfolio", icon: Layers }]
                 : []),

@@ -1,3 +1,5 @@
+import logging
+
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -13,7 +15,9 @@ from app.schemas.workspace import (
     DealershipSubscriptionUpdateRequest,
     DealershipUpdateRequest,
 )
-from app.services import auth_service
+from app.services import auth_service, email_service
+
+logger = logging.getLogger(__name__)
 
 
 def list_active_dealerships(db: Session) -> list[Dealership]:
@@ -59,7 +63,7 @@ def register_dealership(db: Session, payload: DealershipRegistrationRequest) -> 
         raise ConflictError("Admin email is already registered")
 
     try:
-        return dealership_repository.create_registration(
+        admin_user = dealership_repository.create_registration(
             db,
             name=payload.dealership_name,
             email=dealership_email,
@@ -76,6 +80,18 @@ def register_dealership(db: Session, payload: DealershipRegistrationRequest) -> 
         raise ConflictError(
             "Dealership registration conflicts with existing data"
         ) from exc
+
+    try:
+        email_service.send_dealership_welcome(
+            recipient=admin_email,
+            admin_name=payload.admin_name,
+            dealership_name=payload.dealership_name,
+            dealership_email=dealership_email,
+            timezone_name=payload.timezone,
+        )
+    except Exception as exc:
+        logger.warning("Dealership welcome email failed for %s: %s", admin_email, exc)
+    return admin_user
 
 
 def update_dealership(

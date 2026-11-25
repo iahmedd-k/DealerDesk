@@ -20,64 +20,51 @@ for requirement-level status.
   context; request validation, safety checks, output scrubbing, and rate
   limiting are applied.
 - Persistent dealership lead capture with explicit contact consent, source and
-  vehicle interest, staff assignment, status, follow-up time, and matching
-  test-drive booking linkage. The assistant follow-up form creates a lead.
+  vehicle interest, budget, purchase timeline, conversation reference,
+  customer preferences, deal value/notes, automated round-robin lead
+  assignment, full lead activity/history timeline (`LeadActivity`), shared
+  pagination metadata headers (`X-Total-Count`, `X-Page`, `X-Page-Size`,
+  `X-Total-Pages`), lead deletion/retention policies, and matching test-drive
+  booking linkage. Direct test-drive bookings auto-link or create CRM leads,
+  and booked leads can transition to `won`, `follow_up`, or `lost` with
+  double-sale protection, automatic `sold` stock sync, and cleanup of future
+  slots, active holds, and competing bookings.
+- Multi-channel AI Sales Agent across Website, Twilio WhatsApp Sandbox, and
+  Vapi Voice AI with server-side conversation persistence, slot holds,
+  single-use OTP booking verification, and a Staff Conversation Inbox &amp;
+  Human Handoff/Callback Queue UI (`/inbox`).
 - Frontend pages call the backend APIs and report loading and request errors;
   customer and staff workflows are role-aware.
 - Inventory lifecycle management supporting rich states (`available`, `reserved`, `sold`, `in_transit`, `unavailable`), audited status transitions (`VehicleStatusHistory`), audit log integration (`AuditLog`), query filtering, and real-time frontend transition controls and history timelines.
+- Transactional HTML & plain-text email notification system (powered by Resend) covering account verification, password reset & change alerts, staff invitations, OTP verification, dealership welcome, test-drive booking/reschedule/cancellation confirmations, automated 24h/2h test-drive reminders (`reminder_service` + `run_booking_reminders.py` CLI), a PostgreSQL `NotificationDelivery` ledger with idempotent uniqueness, customer lead acknowledgments, dealership new-lead alerts, and staff lead-assignment notifications.
+- Account brute-force lockout, end-user email verification, XSS-safe
+  `HttpOnly` cookie session management (`dd_access` / `dd_refresh`),
+  DB-backed idempotency middleware, automatic PII scrubbing on transcript
+  ingestion, staff message-level redaction, and data-retention cleanup tooling
+  (including aged transcript PII redaction and closed conversation pruning).
+- Transactional async event outbox (`OutboxEvent`) with HMAC-signed webhook
+  delivery, exponential backoff retries, dead-letter tracking, dealership
+  summary reporting (`/reports/summary`), staff availability flags (`is_available`
+  respected by automated lead assignment), and expanded granular audit logging.
 - Alembic migrations run before the backend in Docker Compose. CI runs backend
   migration/tests and frontend lint/build.
 
 ## Remaining gaps
 
-### CRM and customer workflows
-
-- Lead capture does not yet include budget, purchase timeline, conversation
-  reference, or a full activity/history timeline.
-- Automated lead assignment rules, deal management, customer preferences, and
-  lead-retention/deletion policies are not implemented.
-- Lead collections use bounded `limit`/`offset` parameters but do not yet return
-  the shared pagination metadata used by some other endpoints.
-
-### Assistant and communications
-
-- Assistant messages and conversations are not persisted server-side. The
-  browser currently sends bounded history with each request.
-- There is no staff conversation inbox, handoff/callback queue, or customer
-  cross-channel identity resolution.
-- WhatsApp, voice, notifications, and booking reminders are not integrated.
-- Assistant conversation IDs and message-level audit/retention controls remain
-  to be designed.
-
 ### Inventory, reporting, and governance
 
-- Staff availability, multi-location operations, and sales deals are absent.
-- Audit events cover selected workflows, not every sensitive mutation.
-- Reporting and workflow observability are limited; no event outbox or
-  notification-delivery ledger exists.
+- Multi-location branch hierarchies and full third-party lender/financing
+  desking remain future product expansions.
 
 ### Security and operations
 
-- Browser access and refresh tokens remain in `localStorage`; an XSS-safe
-  HttpOnly-cookie design is still needed.
-- Idempotency response storage and locking are process-local, so replay
-  protection is not shared across workers or durable across restarts.
-- Account lockout, end-user email verification, and formal data-retention
-  tooling are not implemented.
 - Production secrets, Supabase bucket policies, email delivery, database
   backups, and monitoring must be configured and verified per deployment.
 
 ## Priority next steps
 
-1. Persist assistant conversations and connect consented leads to their
-   conversation records.
-2. Add inventory lifecycle states/history and broaden mutation audit coverage.
-3. Move auth tokens to secure HttpOnly cookies and make idempotency storage
-   shared/durable before horizontal scaling.
-4. Add lead budget/timeline/activity fields, automated assignment options, and
-   retention controls.
-5. Add staff handoff, reminders, workflow outbox/observability, and focused
-   frontend interaction tests.
+1. Add focused frontend interaction tests and expand multi-location /
+   lender-financing workflows as needed.
 
 ## Related documents
 

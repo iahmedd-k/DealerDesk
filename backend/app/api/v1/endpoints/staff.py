@@ -1,9 +1,13 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.core.authorization import ensure_dealership_role_access
+from app.core.errors import NotFoundError
 from app.core.roles import (
     DEALERSHIP_ADMIN_ROLE,
     DEALERSHIP_MANAGEMENT_ROLES,
+    STAFF_ROLES,
 )
 from app.db.session import get_db
 from app.dependencies.workspace import require_dealership_roles
@@ -14,7 +18,7 @@ from app.schemas.workspace import (
     StaffInvitationResponse,
     StaffUpdateRequest,
 )
-from app.services import staff_service
+from app.services import audit_service, staff_service
 
 
 router = APIRouter(prefix="/dealerships/{dealership_id}/staff", tags=["Staff"])
@@ -64,6 +68,49 @@ def update_staff(
         current_user,
         payload,
     )
+
+
+class StaffAvailabilityUpdateRequest(BaseModel):
+    is_available: bool
+    availability_note: str | None = Field(default=None, max_length=255)
+
+
+@router.patch("/{user_id}/availability", response_model=UserResponse)
+def update_staff_availability(
+    dealership_id: int,
+    user_id: int,
+    payload: StaffAvailabilityUpdateRequest,
+    request: Request,
+    current_user: User = Depends(require_dealership_roles(*STAFF_ROLES)),
+    db: Session = Depends(get_db),
+) -> User:
+    if current_user.id != user_id:
+        ensure_dealership_role_access(current_user, dealership_id, *DEALERSHIP_MANAGEMENT_ROLES)
+    target = (
+        db.query(User)
+        .filter(User.id == user_id, User.dealership_id == dealership_id)
+        .first()
+    )
+    if target is None:
+        raise NotFoundError("Staff member not found")
+    target.is_available = payload.is_available
+    target.availability_note = payload.availability_note
+    db.commit()
+    db.refresh(target)
+    audit_service.log_event(
+        db,
+        action="staff.availability_changed",
+        resource_type="user",
+        resource_id=str(target.id),
+        dealership_id=dealership_id,
+        actor=current_user,
+        ip_address=request.client.host if request.client else None,
+        details={
+            "is_available": target.is_available,
+            "availability_note": target.availability_note,
+        },
+    )
+    return target
 
 
 @router.get("/invitations", response_model=list[StaffInvitationResponse])

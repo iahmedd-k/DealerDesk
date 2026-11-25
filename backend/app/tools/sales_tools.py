@@ -264,6 +264,8 @@ def create_customer_lead(
         updated_at=now,
     )
     saved = lead_repository.save(db, lead)
+    from app.services import lead_service
+    lead_service.notify_new_lead(db, dealership_id, saved)
     return {
         "id": saved.id,
         "dealership_id": saved.dealership_id,

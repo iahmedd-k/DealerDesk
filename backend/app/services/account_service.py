@@ -37,7 +37,11 @@ from app.schemas.auth import (
 from app.schemas.user import UserUpdateRequest
 from app.schemas.workspace import ActivationRequest, ChangePasswordRequest
 from app.services import auth_service
-from app.services.email_service import send_email_verification, send_password_reset
+from app.services.email_service import (
+    send_email_verification,
+    send_password_changed_alert,
+    send_password_reset,
+)
 
 
 PASSWORD_RESET_MESSAGE = (
@@ -298,6 +302,10 @@ def reset_password(
     auth_service.revoke_user_refresh_tokens(db, user.id)
     auth_service.invalidate_user_access_tokens(db, user.id)
     auth_repository.save_account_changes(db, user, reset)
+    try:
+        send_password_changed_alert(recipient=user.email, user_name=user.name)
+    except Exception as exc:
+        logger.warning("Password changed alert failed for user %s: %s", user.id, exc)
     return {"message": "Password reset successfully"}
 
 
@@ -336,7 +344,12 @@ def change_password(
     current_user.must_change_password = False
     auth_service.revoke_user_refresh_tokens(db, current_user.id)
     auth_service.invalidate_user_access_tokens(db, current_user.id)
-    return user_repository.save(db, current_user, refresh=True)
+    updated = user_repository.save(db, current_user, refresh=True)
+    try:
+        send_password_changed_alert(recipient=updated.email, user_name=updated.name)
+    except Exception as exc:
+        logger.warning("Password changed alert failed for user %s: %s", updated.id, exc)
+    return updated
 
 
 def verify_email(db: Session, token: str) -> dict[str, str]:

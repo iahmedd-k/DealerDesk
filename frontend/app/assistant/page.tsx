@@ -19,7 +19,7 @@ import {
 import Shell from "../components/Shell";
 import { useAuth } from "../providers";
 import FormattedMessage from "../components/FormattedMessage";
-import { API_URL, api, refreshStoredAccessToken } from "../api";
+import { API_URL, api, refreshSession } from "../api";
 
 interface Message {
   id: string;
@@ -117,21 +117,21 @@ export default function AssistantPage() {
             content: message.text,
           })),
       });
-      const sendStream = (token: string | null) => fetch(
+      const sendStream = () => fetch(
         `${API_URL}/dealerships/${activeDealershipId}/assistant/chat/stream`,
         {
           method: "POST",
+          credentials: "include",
           headers: {
             "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           body: requestBody,
         },
       );
-      let response = await sendStream(accessToken);
+      let response = await sendStream();
       if (response.status === 401) {
-        const renewedToken = await refreshStoredAccessToken();
-        if (renewedToken) response = await sendStream(renewedToken);
+        const renewed = await refreshSession();
+        if (renewed) response = await sendStream();
       }
 
       if (!response.ok || !response.body) {

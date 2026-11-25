@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState } from "react";
-import { ApiError, api } from "./api";
+import { ApiError, api, refreshSession } from "./api";
 
 export type User = {
   id: number;
@@ -46,23 +46,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     async function restoreSession() {
-      const storedToken = localStorage.getItem("dealerdesk_access");
+      localStorage.removeItem("dealerdesk_access");
+      localStorage.removeItem("dealerdesk_refresh");
       const storedDealership = localStorage.getItem("dealerdesk_active_dealership");
 
       try {
-        const restoredUser = await api<User>("/auth/me", {}, storedToken || null);
+        let restoredUser: User;
+        try {
+          restoredUser = await api<User>("/auth/me", {}, null);
+        } catch (err) {
+          if (err instanceof ApiError && err.statusCode === 401) {
+            const refreshed = await refreshSession();
+            if (!refreshed) throw err;
+            restoredUser = await api<User>("/auth/me", {}, null);
+          } else {
+            throw err;
+          }
+        }
         if (cancelled) return;
         setUser(restoredUser);
-        if (storedToken) setAccessToken(storedToken);
+        setAccessToken(null);
         const storedId = Number(storedDealership);
         setActiveDealershipId(
           restoredUser.dealership_id ??
             (Number.isInteger(storedId) && storedId > 0 ? storedId : 0),
         );
-      } catch (error) {
+      } catch {
         if (cancelled) return;
-        localStorage.removeItem("dealerdesk_access");
-        localStorage.removeItem("dealerdesk_refresh");
         localStorage.removeItem("dealerdesk_user");
         localStorage.removeItem("dealerdesk_active_dealership");
         setAccessToken(null);
@@ -77,9 +87,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  function setSession(accessTokenValue: string, refreshToken: string, nextUser: User) {
-    localStorage.setItem("dealerdesk_access", accessTokenValue);
-    localStorage.setItem("dealerdesk_refresh", refreshToken);
+  function setSession(_accessTokenValue: string, _refreshToken: string, nextUser: User) {
+    localStorage.removeItem("dealerdesk_access");
+    localStorage.removeItem("dealerdesk_refresh");
     if (nextUser.dealership_id) {
       localStorage.setItem("dealerdesk_active_dealership", String(nextUser.dealership_id));
       setActiveDealershipId(nextUser.dealership_id);
@@ -87,7 +97,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       localStorage.removeItem("dealerdesk_active_dealership");
       setActiveDealershipId(0);
     }
-    setAccessToken(accessTokenValue);
+    setAccessToken(null);
     setUser(nextUser);
     setAuthReady(true);
   }

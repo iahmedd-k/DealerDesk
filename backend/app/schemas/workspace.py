@@ -448,9 +448,14 @@ class CustomerLeadCreateRequest(BaseModel):
     email: EmailStr
     phone: str | None = Field(default=None, max_length=32)
     message: str = Field(min_length=1, max_length=2000)
-    source: Literal["website", "assistant", "phone", "walk_in", "referral"] = "website"
+    source: Literal["website", "assistant", "phone", "walk_in", "referral", "whatsapp", "voice"] = "website"
     requested_vehicle_id: int | None = Field(default=None, ge=1)
     consent_to_contact: Literal[True]
+    budget: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    purchase_timeline: str | None = Field(default=None, max_length=64)
+    conversation_id: int | None = Field(default=None, ge=1)
+    preferences: dict | None = None
+    auto_assign: bool = False
 
     @field_validator("name", "message")
     @classmethod
@@ -486,6 +491,11 @@ class CustomerLeadUpdateRequest(BaseModel):
     ] | None = None
     assigned_to_user_id: int | None = Field(default=None, ge=1)
     next_follow_up_at: datetime | None = None
+    budget: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    purchase_timeline: str | None = Field(default=None, max_length=64)
+    preferences: dict | None = None
+    deal_value: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    deal_notes: str | None = Field(default=None, max_length=2000)
 
     @field_validator("next_follow_up_at")
     @classmethod
@@ -523,8 +533,34 @@ class CustomerLeadResponse(BaseModel):
     consent_to_contact: bool
     consented_at: datetime | None
     next_follow_up_at: datetime | None
+    budget: float | None = None
+    purchase_timeline: str | None = None
+    conversation_id: int | None = None
+    preferences: dict | None = None
+    deal_value: float | None = None
+    deal_notes: str | None = None
     created_at: datetime
     updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LeadActivityCreateRequest(BaseModel):
+    activity_type: Literal["note", "call", "email", "meeting"] = "note"
+    summary: str = Field(min_length=1, max_length=2000)
+    details: dict | None = None
+
+
+class LeadActivityResponse(BaseModel):
+    id: int
+    dealership_id: int
+    lead_id: int
+    actor_user_id: int | None = None
+    actor_user_email: str | None = None
+    activity_type: str
+    summary: str
+    details: dict | None = None
+    created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 

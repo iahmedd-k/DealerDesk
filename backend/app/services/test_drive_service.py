@@ -1,6 +1,8 @@
 from datetime import date, datetime, time, timedelta, timezone
+import logging
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -18,11 +20,13 @@ from app.core.roles import (
 )
 from app.models.user import User
 from app.models.workspace import (
+    CustomerLead,
     TestDriveBooking,
     TestDriveSettings,
     TestDriveSlot,
+    Vehicle,
 )
-from app.repositories import test_drive_repository
+from app.repositories import test_drive_repository, user_repository
 from app.schemas.workspace import (
     TestDriveBookingRequest,
     TestDriveCancellationRequest,
@@ -30,7 +34,9 @@ from app.schemas.workspace import (
     TestDriveSettingsRequest,
     TestDriveSlotUpdateRequest,
 )
-from app.services import dealership_service
+from app.services import audit_service, dealership_service, email_service, outbox_service
+
+logger = logging.getLogger(__name__)
 
 
 def get_settings(db: Session, dealership_id: int) -> TestDriveSettings:
@@ -231,7 +237,7 @@ def get_booking(
     booking_id: int,
     current_user: User,
 ) -> TestDriveBooking:
-    dealership_service.get_active_dealership(db, dealership_id)
+    dealership = dealership_service.get_active_dealership(db, dealership_id)
     booking = test_drive_repository.get_booking(db, dealership_id, booking_id)
     if booking is None:
         raise NotFoundError("Booking not found")
@@ -294,7 +300,7 @@ def book_slot(
         raise BadRequestError(
             "Explicit confirmation is required to book a test drive"
         )
-    dealership_service.get_active_dealership(db, dealership_id)
+    dealership = dealership_service.get_active_dealership(db, dealership_id)
     slot = _get_slot(db, dealership_id, slot_id, lock=True)
     if not slot.is_active:
         raise ConflictError("Test-drive slot is inactive")
@@ -339,10 +345,50 @@ def book_slot(
         created_at=datetime.now(timezone.utc),
     )
     try:
-        return test_drive_repository.create_booking(db, booking, slot)
+        saved_booking = test_drive_repository.create_booking(db, booking, slot)
     except IntegrityError as exc:
         db.rollback()
         raise ConflictError("Customer already booked this slot") from exc
+
+    try:
+        zone = ZoneInfo(dealership.timezone)
+        email_service.send_test_drive_confirmation(
+            recipient=current_user.email,
+            customer_name=current_user.name,
+            dealership_name=dealership.name,
+            dealership_address=dealership.address,
+            dealership_phone=dealership.phone,
+            vehicle_label=f"{vehicle.model_year} {vehicle.make} {vehicle.model}",
+            stock_number=vehicle.stock_number,
+            starts_at_local=_format_local_dt(slot.starts_at, zone),
+            ends_at_local=_format_local_time(slot.ends_at, zone),
+            timezone_name=dealership.timezone,
+            booking_id=saved_booking.id,
+        )
+    except Exception as exc:
+        logger.warning("Test-drive confirmation email failed for booking %s: %s", saved_booking.id, exc)
+    _sync_lead_for_booking(db, dealership_id, saved_booking, vehicle, current_user)
+    try:
+        audit_service.log_event(
+            db,
+            action="booking.created",
+            resource_type="test_drive_booking",
+            resource_id=str(saved_booking.id),
+            dealership_id=dealership_id,
+            actor=current_user,
+            details={"slot_id": slot.id, "vehicle_id": vehicle.id},
+        )
+        outbox_service.enqueue_event(
+            db,
+            dealership_id=dealership_id,
+            event_type="booking.confirmed",
+            aggregate_type="test_drive_booking",
+            aggregate_id=saved_booking.id,
+            payload={"booking_id": saved_booking.id, "vehicle_id": vehicle.id, "slot_id": slot.id},
+        )
+    except Exception as exc:
+        logger.warning("Audit/outbox failed for booking %s: %s", saved_booking.id, exc)
+    return saved_booking
 
 
 def reschedule_booking(
@@ -356,7 +402,7 @@ def reschedule_booking(
         raise BadRequestError(
             "Explicit confirmation is required to reschedule a test drive"
         )
-    dealership_service.get_active_dealership(db, dealership_id)
+    dealership = dealership_service.get_active_dealership(db, dealership_id)
     booking = test_drive_repository.get_booking(
         db, dealership_id, booking_id, lock=True
     )
@@ -434,6 +480,24 @@ def reschedule_booking(
         test_drive_repository.save(db, booking, old_slot, new_slot)
     else:
         test_drive_repository.save(db, booking, new_slot)
+
+    try:
+        customer = user_repository.get_by_id(db, booking.customer_id)
+        if customer is not None:
+            zone = ZoneInfo(dealership.timezone)
+            email_service.send_test_drive_rescheduled(
+                recipient=customer.email,
+                customer_name=customer.name,
+                dealership_name=dealership.name,
+                dealership_address=dealership.address,
+                vehicle_label=f"{vehicle.model_year} {vehicle.make} {vehicle.model}",
+                starts_at_local=_format_local_dt(new_slot.starts_at, zone),
+                ends_at_local=_format_local_time(new_slot.ends_at, zone),
+                timezone_name=dealership.timezone,
+                booking_id=booking.id,
+            )
+    except Exception as exc:
+        logger.warning("Test-drive reschedule email failed for booking %s: %s", booking.id, exc)
     return booking
 
 
@@ -476,6 +540,24 @@ def cancel_booking(
             test_drive_repository.save(db, booking)
         else:
             test_drive_repository.save(db, booking, slot)
+
+        try:
+            dealership = dealership_service.get_active_dealership(db, dealership_id)
+            customer = user_repository.get_by_id(db, booking.customer_id)
+            vehicle = test_drive_repository.get_vehicle(db, booking.vehicle_id)
+            if customer is not None and slot is not None and vehicle is not None:
+                zone = ZoneInfo(dealership.timezone)
+                email_service.send_test_drive_cancelled(
+                    recipient=customer.email,
+                    customer_name=customer.name,
+                    dealership_name=dealership.name,
+                    vehicle_label=f"{vehicle.model_year} {vehicle.make} {vehicle.model}",
+                    starts_at_local=_format_local_dt(slot.starts_at, zone),
+                    timezone_name=dealership.timezone,
+                    booking_id=booking.id,
+                )
+        except Exception as exc:
+            logger.warning("Test-drive cancellation email failed for booking %s: %s", booking.id, exc)
 def _get_slot(
     db: Session,
     dealership_id: int,
@@ -596,3 +678,70 @@ def _utc(value: datetime) -> datetime:
         if value.tzinfo is None
         else value.astimezone(timezone.utc)
     )
+
+
+def _format_local_dt(value: datetime, zone: ZoneInfo) -> str:
+    return _utc(value).astimezone(zone).strftime("%b %d, %Y at %I:%M %p")
+
+
+def _format_local_time(value: datetime, zone: ZoneInfo) -> str:
+    return _utc(value).astimezone(zone).strftime("%I:%M %p")
+
+
+def _sync_lead_for_booking(
+    db: Session,
+    dealership_id: int,
+    booking: TestDriveBooking,
+    vehicle: Vehicle,
+    customer: User,
+) -> None:
+    """
+    Auto-link an existing open CRM lead for this customer & dealership, or create a
+    new CRM lead in 'test_drive_scheduled' status so staff can convert it to won/lost.
+    """
+    try:
+        now = datetime.now(timezone.utc)
+        existing_lead = db.scalar(
+            select(CustomerLead)
+            .where(
+                CustomerLead.dealership_id == dealership_id,
+                CustomerLead.email.ilike(customer.email),
+                CustomerLead.test_drive_booking_id.is_(None),
+                CustomerLead.status.notin_(["won", "lost"]),
+            )
+            .order_by(CustomerLead.created_at.desc())
+        )
+        if existing_lead is not None:
+            existing_lead.test_drive_booking_id = booking.id
+            existing_lead.status = "test_drive_scheduled"
+            existing_lead.customer_id = customer.id
+            if existing_lead.requested_vehicle_id is None:
+                existing_lead.requested_vehicle_id = vehicle.id
+            existing_lead.next_follow_up_at = None
+            existing_lead.updated_at = now
+            db.commit()
+            return
+
+        new_lead = CustomerLead(
+            dealership_id=dealership_id,
+            customer_id=customer.id,
+            requested_vehicle_id=vehicle.id,
+            test_drive_booking_id=booking.id,
+            name=customer.name,
+            email=customer.email.lower(),
+            message=(
+                f"Booked test drive for {vehicle.model_year} {vehicle.make} {vehicle.model} "
+                f"(Stock #{vehicle.stock_number})."
+            ),
+            source="test_drive",
+            status="test_drive_scheduled",
+            consent_to_contact=True,
+            consented_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(new_lead)
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.warning("Failed to auto-sync CRM lead for booking %s: %s", booking.id, exc)

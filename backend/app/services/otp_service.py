@@ -149,16 +149,13 @@ def _dispatch_otp_message(
 ) -> None:
     """Dispatches the OTP message according to communication channel."""
     if "@" in identifier or channel == "email":
-        subject = f"Your Verification Code: {raw_code}"
-        body = (
-            f"Your verification code is: {raw_code}\n\n"
-            f"This code will expire in {OTP_EXPIRY_MINUTES} minutes. "
-            "If you did not request this, please disregard this message."
-        )
         try:
             email_circuit_breaker.call(
-                email_service._send_resend_email,
-                {"to": [identifier], "subject": subject, "text": body},
+                email_service.send_otp_email,
+                recipient=identifier,
+                code=raw_code,
+                expires_minutes=OTP_EXPIRY_MINUTES,
+                purpose=purpose.replace("_", " "),
             )
         except Exception as exc:
             logger.warning("Email OTP dispatch failed for %s: %s", identifier, exc)

@@ -1,11 +1,11 @@
 "use client";
 
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { CheckCircle2, Loader2, Plus, RefreshCw, UserRound } from "lucide-react";
+import { CheckCircle2, History, Loader2, Plus, RefreshCw, Sparkles, UserRound, X } from "lucide-react";
 import Shell from "../components/Shell";
 import { api } from "../api";
 import { useAuth } from "../providers";
-import type { CustomerLead, StaffUser } from "../lib/types";
+import type { CustomerLead, LeadActivity, StaffUser } from "../lib/types";
 
 type LeadStatus =
   | "new"
@@ -28,31 +28,42 @@ function LeadRow({
   lead,
   staff,
   saving,
+  canAutoAssign,
   onSave,
   onConvert,
+  onAutoAssign,
+  onViewActivities,
 }: {
   lead: CustomerLead;
   staff: StaffUser[];
   saving: boolean;
+  canAutoAssign: boolean;
   onSave: (
     leadId: number,
     status: LeadStatus | null,
     assignedToUserId: number | null,
     followUp: string | null,
+    dealValue: number | null,
   ) => Promise<void>;
   onConvert: (leadId: number, bookingId: number) => Promise<void>;
+  onAutoAssign: (leadId: number) => Promise<void>;
+  onViewActivities: (lead: CustomerLead) => void;
 }) {
   const [status, setStatus] = useState<LeadStatus>(lead.status);
   const [assignee, setAssignee] = useState(
     lead.assigned_to_user_id ? String(lead.assigned_to_user_id) : "",
   );
   const [followUp, setFollowUp] = useState(toLocalDateTime(lead.next_follow_up_at));
+  const [dealValue, setDealValue] = useState(
+    lead.deal_value != null ? String(lead.deal_value) : "",
+  );
   const [bookingId, setBookingId] = useState("");
 
   useEffect(() => {
     setStatus(lead.status);
     setAssignee(lead.assigned_to_user_id ? String(lead.assigned_to_user_id) : "");
     setFollowUp(toLocalDateTime(lead.next_follow_up_at));
+    setDealValue(lead.deal_value != null ? String(lead.deal_value) : "");
   }, [lead]);
 
   return (
@@ -64,32 +75,57 @@ function LeadRow({
         </a>
         <div className="text-xs text-slate-400">{lead.phone || "No phone provided"}</div>
         <p className="mt-2 max-w-xs whitespace-pre-wrap text-xs text-slate-300">{lead.message}</p>
+        {(lead.budget != null || lead.purchase_timeline) ? (
+          <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
+            {lead.budget != null ? (
+              <span className="rounded bg-slate-800 px-2 py-0.5 text-emerald-300">
+                Budget: ${Number(lead.budget).toLocaleString()}
+              </span>
+            ) : null}
+            {lead.purchase_timeline ? (
+              <span className="rounded bg-slate-800 px-2 py-0.5 text-blue-300">
+                Timeline: {lead.purchase_timeline}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         <div className="mt-2 text-[11px] text-slate-500">
           {lead.source} · {new Date(lead.created_at).toLocaleDateString()}
+          {lead.conversation_id ? ` · Conv #${lead.conversation_id}` : ""}
         </div>
       </td>
       <td className="px-4 py-4">
         <label className="mb-1 block text-[11px] text-slate-400">Status</label>
-        {lead.test_drive_booking_id || lead.status === "test_drive_scheduled" ? (
-          <div className="text-sm font-semibold text-emerald-300">
-            Test drive scheduled{lead.test_drive_booking_id ? ` · Booking #${lead.test_drive_booking_id}` : ""}
+        <select
+          value={status}
+          onChange={(event) => setStatus(event.target.value as LeadStatus)}
+          className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-sm text-white"
+        >
+          {lead.test_drive_booking_id || lead.status === "test_drive_scheduled" ? (
+            <>
+              <option value="test_drive_scheduled">Test drive scheduled</option>
+              <option value="follow_up">Follow-up</option>
+              <option value="won">Won (Car Sold)</option>
+              <option value="lost">Lost</option>
+            </>
+          ) : (
+            <>
+              <option value="new">New</option>
+              <option value="contacted">Contacted</option>
+              <option value="qualified">Qualified</option>
+              <option value="follow_up">Follow-up</option>
+              <option value="won">Won (Car Sold)</option>
+              <option value="lost">Lost</option>
+            </>
+          )}
+        </select>
+        {lead.test_drive_booking_id ? (
+          <div className="mt-1.5 text-xs font-medium text-emerald-300">
+            Booking #{lead.test_drive_booking_id}
           </div>
-        ) : (
-          <select
-            value={status}
-            onChange={(event) => setStatus(event.target.value as LeadStatus)}
-            className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-sm text-white"
-          >
-            <option value="new">New</option>
-            <option value="contacted">Contacted</option>
-            <option value="qualified">Qualified</option>
-            <option value="follow_up">Follow-up</option>
-            <option value="won">Won</option>
-            <option value="lost">Lost</option>
-          </select>
-        )}
+        ) : null}
         {lead.requested_vehicle_id ? (
-          <div className="mt-2 text-xs text-slate-400">Vehicle #{lead.requested_vehicle_id}</div>
+          <div className="mt-1 text-xs text-slate-400">Vehicle #{lead.requested_vehicle_id}</div>
         ) : null}
       </td>
       <td className="px-4 py-4">
@@ -113,21 +149,51 @@ function LeadRow({
           onChange={(event) => setFollowUp(event.target.value)}
           className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-white"
         />
-        <button
-          type="button"
-          disabled={saving}
-          onClick={() =>
-            onSave(
-              lead.id,
-              lead.test_drive_booking_id || lead.status === "test_drive_scheduled" ? null : status,
-              assignee ? Number(assignee) : null,
-              followUp ? new Date(followUp).toISOString() : null,
-            )
-          }
-          className="mt-3 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
-        >
-          {saving ? "Saving..." : "Save changes"}
-        </button>
+        <label className="mb-1 mt-3 block text-[11px] text-slate-400">Deal Value ($)</label>
+        <input
+          type="number"
+          min={0}
+          step="100"
+          placeholder="Optional"
+          value={dealValue}
+          onChange={(event) => setDealValue(event.target.value)}
+          className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-white"
+        />
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() =>
+              onSave(
+                lead.id,
+                status,
+                assignee ? Number(assignee) : null,
+                followUp ? new Date(followUp).toISOString() : null,
+                dealValue !== "" ? Number(dealValue) : null,
+              )
+            }
+            className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
+          >
+            {saving ? "Saving..." : "Save changes"}
+          </button>
+          {canAutoAssign && !assignee ? (
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void onAutoAssign(lead.id)}
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-2.5 py-2 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+            >
+              <Sparkles className="h-3.5 w-3.5 text-amber-300" /> Auto-assign
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => onViewActivities(lead)}
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-2.5 py-2 text-xs text-slate-200 hover:bg-slate-800"
+          >
+            <History className="h-3.5 w-3.5" /> Timeline
+          </button>
+        </div>
       </td>
       <td className="px-4 py-4">
         {lead.test_drive_booking_id || lead.status === "test_drive_scheduled" ? (
@@ -174,8 +240,15 @@ export default function LeadsPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [budget, setBudget] = useState("");
+  const [purchaseTimeline, setPurchaseTimeline] = useState("");
+  const [autoAssign, setAutoAssign] = useState(false);
   const [message, setMessage] = useState("");
   const [consent, setConsent] = useState(false);
+  const [activityLead, setActivityLead] = useState<CustomerLead | null>(null);
+  const [activities, setActivities] = useState<LeadActivity[]>([]);
+  const [loadingActivities, setLoadingActivities] = useState(false);
+  const [noteSummary, setNoteSummary] = useState("");
 
   const canManageTeam = user?.role === "dealership_admin" || user?.role === "manager";
 
@@ -231,6 +304,9 @@ export default function LeadsPage() {
           name,
           email,
           phone: phone || null,
+          budget: budget !== "" ? Number(budget) : null,
+          purchase_timeline: purchaseTimeline || null,
+          auto_assign: autoAssign,
           message,
           source: "phone",
           consent_to_contact: true,
@@ -240,6 +316,9 @@ export default function LeadsPage() {
       setName("");
       setEmail("");
       setPhone("");
+      setBudget("");
+      setPurchaseTimeline("");
+      setAutoAssign(false);
       setMessage("");
       setConsent(false);
       setNotice("Lead created and contact consent recorded.");
@@ -255,6 +334,7 @@ export default function LeadsPage() {
     status: LeadStatus | null,
     assignedToUserId: number | null,
     followUp: string | null,
+    dealValue: number | null,
   ) {
     if (!activeDealershipId) return;
     setSavingLeadId(leadId);
@@ -269,6 +349,7 @@ export default function LeadsPage() {
             ...(status ? { status } : {}),
             assigned_to_user_id: assignedToUserId,
             next_follow_up_at: followUp,
+            ...(dealValue !== null ? { deal_value: dealValue } : {}),
           }),
         },
       );
@@ -278,6 +359,60 @@ export default function LeadsPage() {
       setError(cause instanceof Error ? cause.message : "Could not update the lead.");
     } finally {
       setSavingLeadId(null);
+    }
+  }
+
+  async function autoAssignLead(leadId: number) {
+    if (!activeDealershipId) return;
+    setSavingLeadId(leadId);
+    setError("");
+    setNotice("");
+    try {
+      const updated = await api<CustomerLead>(
+        `/dealerships/${activeDealershipId}/leads/${leadId}/auto-assign`,
+        { method: "POST" },
+      );
+      setLeads((current) => current.map((lead) => lead.id === leadId ? updated : lead));
+      setNotice("Lead auto-assigned to least-loaded sales rep.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not auto-assign lead.");
+    } finally {
+      setSavingLeadId(null);
+    }
+  }
+
+  async function openActivities(lead: CustomerLead) {
+    if (!activeDealershipId) return;
+    setActivityLead(lead);
+    setNoteSummary("");
+    setLoadingActivities(true);
+    try {
+      const items = await api<LeadActivity[]>(
+        `/dealerships/${activeDealershipId}/leads/${lead.id}/activities`,
+      );
+      setActivities(items);
+    } catch {
+      setActivities([]);
+    } finally {
+      setLoadingActivities(false);
+    }
+  }
+
+  async function addNoteActivity(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!activeDealershipId || !activityLead || !noteSummary.trim()) return;
+    try {
+      const created = await api<LeadActivity>(
+        `/dealerships/${activeDealershipId}/leads/${activityLead.id}/activities`,
+        {
+          method: "POST",
+          body: JSON.stringify({ activity_type: "note", summary: noteSummary.trim() }),
+        },
+      );
+      setActivities((prev) => [created, ...prev]);
+      setNoteSummary("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not add activity note.");
     }
   }
 
@@ -329,15 +464,29 @@ export default function LeadsPage() {
           <input required maxLength={100} value={name} onChange={(event) => setName(event.target.value)} placeholder="Customer name" className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white" />
           <input required type="email" maxLength={320} value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email address" className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white" />
           <input maxLength={32} value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Phone (optional)" className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white" />
+          <input type="number" min={0} step="100" value={budget} onChange={(event) => setBudget(event.target.value)} placeholder="Budget $ (optional)" className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white" />
+          <select value={purchaseTimeline} onChange={(event) => setPurchaseTimeline(event.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white">
+            <option value="">Timeline (optional)</option>
+            <option value="immediate">Immediate</option>
+            <option value="this_month">This Month</option>
+            <option value="1_3_months">1-3 Months</option>
+            <option value="researching">Researching</option>
+          </select>
           <button disabled={submitting || !consent} className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50">
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserRound className="h-4 w-4" />}
             Create lead
           </button>
           <textarea required maxLength={2000} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Inquiry details" className="min-h-20 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white md:col-span-2 xl:col-span-3" />
-          <label className="flex items-start gap-2 text-xs leading-5 text-slate-400 xl:col-span-1">
-            <input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} className="mt-1 accent-blue-500" />
-            Customer agreed to be contacted about this inquiry.
-          </label>
+          <div className="flex flex-col justify-center gap-2 text-xs leading-5 text-slate-400 xl:col-span-1">
+            <label className="flex items-start gap-2">
+              <input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} className="mt-1 accent-blue-500" />
+              Customer agreed to be contacted about this inquiry.
+            </label>
+            <label className="flex items-start gap-2">
+              <input type="checkbox" checked={autoAssign} onChange={(event) => setAutoAssign(event.target.checked)} className="mt-1 accent-blue-500" />
+              Auto-assign to least-loaded sales rep.
+            </label>
+          </div>
         </div>
       </form>
 
@@ -358,8 +507,11 @@ export default function LeadsPage() {
                 lead={lead}
                 staff={staff}
                 saving={savingLeadId === lead.id}
+                canAutoAssign={canManageTeam}
                 onSave={saveLead}
                 onConvert={convertLead}
+                onAutoAssign={autoAssignLead}
+                onViewActivities={openActivities}
               />
             ))}
           </tbody>
@@ -370,6 +522,57 @@ export default function LeadsPage() {
           <div className="p-8 text-center text-sm text-slate-400">No leads yet. Add an inquiry above to start the CRM workflow.</div>
         ) : null}
       </div>
+
+      {activityLead ? (
+        <div className="modal-overlay">
+          <div className="modal-content p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-white">
+                  Lead Activity Timeline · {activityLead.name}
+                </h3>
+                <p className="text-xs text-slate-400">Lead #{activityLead.id} · {activityLead.email}</p>
+              </div>
+              <button onClick={() => setActivityLead(null)} className="text-slate-400 hover:text-white">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <form onSubmit={addNoteActivity} className="flex gap-2">
+              <input
+                type="text"
+                required
+                value={noteSummary}
+                onChange={(e) => setNoteSummary(e.target.value)}
+                placeholder="Add a call log or sales note..."
+                className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+              />
+              <button type="submit" className="btn-primary text-xs">
+                Add Note
+              </button>
+            </form>
+            {loadingActivities ? (
+              <p className="text-xs text-slate-400">Loading activity timeline...</p>
+            ) : activities.length === 0 ? (
+              <p className="text-xs text-slate-500">No activity events recorded yet.</p>
+            ) : (
+              <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                {activities.map((act) => (
+                  <div key={act.id} className="rounded-lg border border-slate-800 bg-slate-950 p-3 text-xs">
+                    <div className="flex items-center justify-between text-[11px] text-slate-400">
+                      <span className="font-semibold uppercase text-blue-300">{act.activity_type}</span>
+                      <span>{new Date(act.created_at).toLocaleString()}</span>
+                    </div>
+                    <p className="mt-1 text-slate-200">{act.summary}</p>
+                    {act.actor_user_email ? (
+                      <p className="mt-1 text-[10px] text-slate-500">By: {act.actor_user_email}</p>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
     </Shell>
   );
 }

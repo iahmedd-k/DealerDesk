@@ -24,6 +24,8 @@ class User(Base):
         DateTime(timezone=True), nullable=True
     )
     is_email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_available: Mapped[bool] = mapped_column(Boolean, default=True)
+    availability_note: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class EmailVerificationToken(Base):

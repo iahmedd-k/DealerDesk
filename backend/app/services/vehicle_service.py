@@ -1,5 +1,9 @@
+from datetime import datetime, timezone
 from decimal import Decimal
+import logging
+from zoneinfo import ZoneInfo
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -11,15 +15,24 @@ from app.core.errors import (
     UnprocessableEntityError,
 )
 from app.core.roles import DEALERSHIP_MANAGEMENT_ROLES
+from app.models.channel import TestDriveSlotHold
 from app.models.user import User
-from app.models.workspace import Brand, Vehicle, VehicleStatusHistory
-from app.repositories import brand_repository, vehicle_repository
+from app.models.workspace import (
+    Brand,
+    TestDriveBooking,
+    TestDriveSlot,
+    Vehicle,
+    VehicleStatusHistory,
+)
+from app.repositories import brand_repository, dealership_repository, user_repository, vehicle_repository
 from app.schemas.workspace import (
     VehicleCreateRequest,
     VehicleStatusTransitionRequest,
     VehicleUpdateRequest,
 )
-from app.services import audit_service, dealership_service
+from app.services import audit_service, dealership_service, email_service, outbox_service
+
+logger = logging.getLogger(__name__)
 
 
 def create_vehicle(
@@ -284,6 +297,8 @@ def update_vehicle(
                 "reason": "vehicle_update",
             },
         )
+        if saved_vehicle.status in {"sold", "unavailable"}:
+            _cleanup_bookings_and_slots_on_unavailable(db, dealership_id, saved_vehicle)
 
     return saved_vehicle
 
@@ -339,6 +354,24 @@ def transition_vehicle_status(
             "stock_number": vehicle.stock_number,
         },
     )
+    if new_status in {"sold", "unavailable"}:
+        _cleanup_bookings_and_slots_on_unavailable(db, dealership_id, saved)
+    try:
+        outbox_service.enqueue_event(
+            db,
+            dealership_id=dealership_id,
+            event_type=f"vehicle.{new_status}" if new_status == "sold" else "vehicle.status_changed",
+            aggregate_type="vehicle",
+            aggregate_id=saved.id,
+            payload={
+                "vehicle_id": saved.id,
+                "previous_status": prev_status,
+                "new_status": new_status,
+                "stock_number": saved.stock_number,
+            },
+        )
+    except Exception as exc:
+        logger.warning("Outbox enqueue failed for vehicle %s: %s", saved.id, exc)
     return saved
 
 
@@ -385,6 +418,7 @@ def delete_vehicle(
         actor=current_user,
         details={"previous_status": prev_status},
     )
+    _cleanup_bookings_and_slots_on_unavailable(db, dealership_id, vehicle)
 
 
 def update_vehicle_availability(
@@ -454,3 +488,97 @@ def _ensure_brand_active(db: Session, brand_id: int) -> None:
         raise ConflictError(
             "Vehicles with inactive brands cannot be marked available or test-drive enabled"
         )
+
+
+def _cleanup_bookings_and_slots_on_unavailable(
+    db: Session,
+    dealership_id: int,
+    vehicle: Vehicle,
+) -> None:
+    """
+    When a vehicle is sold or marked unavailable, deactivate its future slots,
+    release active slot holds, and cancel + notify any remaining booked future test drives.
+    """
+    now = datetime.now(timezone.utc)
+    future_slots = list(
+        db.scalars(
+            select(TestDriveSlot).where(
+                TestDriveSlot.dealership_id == dealership_id,
+                TestDriveSlot.vehicle_id == vehicle.id,
+                TestDriveSlot.starts_at > now,
+            )
+        )
+    )
+    slot_ids = [s.id for s in future_slots]
+    slot_map = {s.id: s for s in future_slots}
+
+    for slot in future_slots:
+        slot.is_active = False
+
+    if slot_ids:
+        active_holds = list(
+            db.scalars(
+                select(TestDriveSlotHold).where(
+                    TestDriveSlotHold.dealership_id == dealership_id,
+                    TestDriveSlotHold.slot_id.in_(slot_ids),
+                    TestDriveSlotHold.status == "active",
+                )
+            )
+        )
+        for hold in active_holds:
+            hold.status = "released"
+
+    booked_future = list(
+        db.scalars(
+            select(TestDriveBooking)
+            .join(TestDriveSlot, TestDriveSlot.id == TestDriveBooking.slot_id)
+            .where(
+                TestDriveBooking.dealership_id == dealership_id,
+                TestDriveBooking.vehicle_id == vehicle.id,
+                TestDriveBooking.status == "booked",
+                TestDriveSlot.starts_at > now,
+            )
+        )
+    )
+
+    notifications: list[tuple[str, str, datetime]] = []
+    for booking in booked_future:
+        booking.status = "cancelled"
+        booking.cancelled_at = now
+        slot = slot_map.get(booking.slot_id)
+        if slot is not None and slot.booked_count > 0:
+            slot.booked_count -= 1
+        customer = user_repository.get_by_id(db, booking.customer_id)
+        if customer is not None and slot is not None:
+            notifications.append((customer.email, customer.name, slot.starts_at))
+
+    if future_slots or booked_future:
+        db.commit()
+
+    if notifications:
+        dealership = dealership_repository.get_by_id(db, dealership_id)
+        if dealership is not None:
+            zone = ZoneInfo(dealership.timezone)
+            vehicle_label = f"{vehicle.model_year} {vehicle.make} {vehicle.model}"
+            for idx, (cust_email, cust_name, starts_at) in enumerate(notifications):
+                try:
+                    utc_start = (
+                        starts_at.replace(tzinfo=timezone.utc)
+                        if starts_at.tzinfo is None
+                        else starts_at.astimezone(timezone.utc)
+                    )
+                    email_service.send_test_drive_cancelled(
+                        recipient=cust_email,
+                        customer_name=cust_name,
+                        dealership_name=dealership.name,
+                        vehicle_label=vehicle_label,
+                        starts_at_local=utc_start.astimezone(zone).strftime("%b %d, %Y at %I:%M %p"),
+                        timezone_name=dealership.timezone,
+                        booking_id=booked_future[idx].id,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to send cancellation notice on vehicle %s unavailable: %s",
+                        vehicle.id,
+                        exc,
+                    )

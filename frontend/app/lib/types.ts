@@ -119,8 +119,56 @@ export interface CustomerLead {
   consent_to_contact: boolean;
   consented_at: string | null;
   next_follow_up_at: string | null;
+  budget?: number | null;
+  purchase_timeline?: string | null;
+  conversation_id?: number | null;
+  preferences?: Record<string, unknown> | null;
+  deal_value?: number | null;
+  deal_notes?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface LeadActivity {
+  id: number;
+  dealership_id: number;
+  lead_id: number;
+  actor_user_id: number | null;
+  actor_user_email?: string | null;
+  activity_type: string;
+  summary: string;
+  details?: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface ConversationMessageItem {
+  id: number;
+  conversation_id: number;
+  sender_type: "customer" | "agent" | "staff" | "system" | string;
+  sender_id: number | null;
+  content: string;
+  channel_metadata?: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface ConversationSummary {
+  id: number;
+  dealership_id: number;
+  channel: "website" | "whatsapp" | "voice" | string;
+  channel_user_id: string;
+  customer_id: number | null;
+  status: "active" | "handed_off" | "closed" | string;
+  assigned_to_user_id: number | null;
+  assigned_to_name: string | null;
+  handoff_reason: string | null;
+  last_message_preview: string | null;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConversationDetail extends ConversationSummary {
+  messages: ConversationMessageItem[];
 }
 
 export interface KnowledgeDocument {

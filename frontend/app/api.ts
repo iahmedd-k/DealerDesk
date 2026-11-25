@@ -15,16 +15,16 @@ export class ApiError extends Error {
   }
 }
 
-function storedAccessToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return window.localStorage.getItem("dealerdesk_access");
+let refreshInProgress: Promise<boolean> | null = null;
+
+function clearLegacyTokenStorage(): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem("dealerdesk_access");
+  window.localStorage.removeItem("dealerdesk_refresh");
 }
 
-let refreshInProgress: Promise<string | null> | null = null;
-
-export async function refreshStoredAccessToken(): Promise<string | null> {
-  if (typeof window === "undefined") return null;
-  const refreshToken = window.localStorage.getItem("dealerdesk_refresh");
+export async function refreshSession(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
   if (refreshInProgress) return refreshInProgress;
 
   refreshInProgress = (async () => {
@@ -33,28 +33,25 @@ export async function refreshStoredAccessToken(): Promise<string | null> {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(refreshToken ? { refresh_token: refreshToken } : {}),
+        body: JSON.stringify({}),
       });
       if (!response.ok) throw new Error("Session refresh failed");
-      const tokens = (await response.json()) as {
-        access_token: string;
-        refresh_token: string;
-      };
-      if (tokens.access_token) {
-        window.localStorage.setItem("dealerdesk_access", tokens.access_token);
-        window.localStorage.setItem("dealerdesk_refresh", tokens.refresh_token);
-      }
-      return tokens.access_token;
-    } catch (error) {
-      window.localStorage.removeItem("dealerdesk_access");
-      window.localStorage.removeItem("dealerdesk_refresh");
+      clearLegacyTokenStorage();
+      return true;
+    } catch {
+      clearLegacyTokenStorage();
       window.dispatchEvent(new Event("dealerdesk:auth-expired"));
-      return null;
+      return false;
     } finally {
       refreshInProgress = null;
     }
   })();
   return refreshInProgress;
+}
+
+export async function refreshStoredAccessToken(): Promise<string | null> {
+  const ok = await refreshSession();
+  return ok ? "cookie" : null;
 }
 
 export async function api<T>(
@@ -75,12 +72,14 @@ export async function api<T>(
     headers.set("Content-Type", "application/json");
   }
 
-  const usesStoredToken = accessToken === undefined;
-  let token = usesStoredToken ? storedAccessToken() : accessToken;
-  const sendRequest = async (requestToken: string | null): Promise<Response> => {
+  const usesCookieSession = accessToken === undefined;
+  const sendRequest = async (explicitToken: string | null | undefined): Promise<Response> => {
     const requestHeaders = new Headers(headers);
-    if (requestToken) requestHeaders.set("Authorization", `Bearer ${requestToken}`);
-    else requestHeaders.delete("Authorization");
+    if (explicitToken && explicitToken !== "cookie") {
+      requestHeaders.set("Authorization", `Bearer ${explicitToken}`);
+    } else {
+      requestHeaders.delete("Authorization");
+    }
     try {
       return await fetch(`${API_URL}${path}`, {
         ...options,
@@ -92,17 +91,15 @@ export async function api<T>(
       throw new ApiError(`Could not connect to DealerDesk: ${message}`, 0);
     }
   };
-  let response = await sendRequest(token);
+  let response = await sendRequest(accessToken);
   if (
     response.status === 401
-    && usesStoredToken
-    && token
+    && usesCookieSession
     && !path.startsWith("/auth/")
   ) {
-    const refreshedToken = await refreshStoredAccessToken();
-    if (refreshedToken) {
-      token = refreshedToken;
-      response = await sendRequest(token);
+    const refreshed = await refreshSession();
+    if (refreshed) {
+      response = await sendRequest(null);
     }
   }
 

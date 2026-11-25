@@ -211,7 +211,9 @@ class VehicleStatusHistory(Base):
     )
 
     vehicle: Mapped[Vehicle] = relationship(back_populates="status_history")
-    changed_by_user: Mapped["User"] = relationship(foreign_keys=[changed_by_user_id], lazy="joined")
+    changed_by_user: Mapped["User"] = relationship(
+        foreign_keys=[changed_by_user_id], lazy="joined"
+    )
 
 
 class TestDriveSettings(Base):
@@ -364,5 +366,103 @@ class CustomerLead(Base):
     next_follow_up_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
+    budget: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    purchase_timeline: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    conversation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    preferences: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    deal_value: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    deal_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class LeadActivity(Base):
+    __tablename__ = "lead_activities"
+    __table_args__ = (
+        Index("ix_lead_activities_lead_created", "lead_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    dealership_id: Mapped[int] = mapped_column(
+        ForeignKey("dealerships.id", ondelete="CASCADE"), index=True
+    )
+    lead_id: Mapped[int] = mapped_column(
+        ForeignKey("customer_leads.id", ondelete="CASCADE"), index=True
+    )
+    actor_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    activity_type: Mapped[str] = mapped_column(String(32), index=True)
+    summary: Mapped[str] = mapped_column(Text)
+    details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+    )
+
+class NotificationDelivery(Base):
+    __tablename__ = "notification_deliveries"
+    __table_args__ = (
+        UniqueConstraint(
+            "booking_id",
+            "notification_type",
+            name="uq_notification_booking_type",
+        ),
+        Index("ix_notification_deliveries_dealership", "dealership_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    dealership_id: Mapped[int] = mapped_column(
+        ForeignKey("dealerships.id", ondelete="CASCADE"), index=True
+    )
+    booking_id: Mapped[int | None] = mapped_column(
+        ForeignKey("test_drive_bookings.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    notification_type: Mapped[str] = mapped_column(String(48), index=True)
+    channel: Mapped[str] = mapped_column(String(24), default="email")
+    recipient: Mapped[str] = mapped_column(String(320))
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+    )
+
+
+class OutboxEvent(Base):
+    __tablename__ = "outbox_events"
+    __table_args__ = (
+        Index("ix_outbox_events_dealership_status", "dealership_id", "status"),
+        Index("ix_outbox_events_status_retry", "status", "next_retry_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    dealership_id: Mapped[int] = mapped_column(
+        ForeignKey("dealerships.id", ondelete="CASCADE"), index=True
+    )
+    event_type: Mapped[str] = mapped_column(String(64), index=True)
+    aggregate_type: Mapped[str] = mapped_column(String(48))
+    aggregate_id: Mapped[str] = mapped_column(String(64))
+    payload: Mapped[dict] = mapped_column(JSON)
+    target_webhook_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    delivered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+    )

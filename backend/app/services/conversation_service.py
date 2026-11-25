@@ -1,10 +1,31 @@
 from datetime import datetime, timezone
 import re
 from typing import Any
+
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.errors import NotFoundError
 from app.models.channel import Conversation, ConversationMessage
 from app.models.user import User
+
+_CARD_PATTERN = re.compile(r"\b(?:\d[ -]*?){13,19}\b")
+_SSN_PATTERN = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+_EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+_PHONE_PATTERN = re.compile(r"(?<!\w)(?:\+?\d[\d\s().-]{7,}\d)(?!\w)")
+
+
+def scrub_sensitive_pii(text: str, *, include_contact_pii: bool = False) -> tuple[str, bool]:
+    """
+    Redacts high-risk PII (payment cards, SSNs) on ingestion, and optionally
+    contact PII (emails, phone numbers) during aged transcript retention passes.
+    """
+    scrubbed = _CARD_PATTERN.sub("[REDACTED_CARD]", text)
+    scrubbed = _SSN_PATTERN.sub("[REDACTED_SSN]", scrubbed)
+    if include_contact_pii:
+        scrubbed = _EMAIL_PATTERN.sub("[REDACTED_EMAIL]", scrubbed)
+        scrubbed = _PHONE_PATTERN.sub("[REDACTED_PHONE]", scrubbed)
+    return scrubbed, scrubbed != text
 
 
 def get_or_create_conversation(
@@ -91,15 +112,20 @@ def append_message(
     channel_metadata: dict[str, Any] | None = None,
 ) -> ConversationMessage:
     """
-    Appends a new message turn to the persistent conversation log.
+    Appends a new message turn to the persistent conversation log,
+    automatically scrubbing high-risk payment/SSN PII on ingestion.
     """
     now = datetime.now(timezone.utc)
+    clean_content, was_scrubbed = scrub_sensitive_pii(content, include_contact_pii=False)
+    meta = dict(channel_metadata or {})
+    if was_scrubbed:
+        meta["pii_scrubbed_on_ingest"] = True
     message = ConversationMessage(
         conversation_id=conversation_id,
         sender_type=sender_type,
         sender_id=sender_id,
-        content=content,
-        channel_metadata=channel_metadata or {},
+        content=clean_content,
+        channel_metadata=meta,
         created_at=now,
     )
     db.add(message)
@@ -143,4 +169,171 @@ def link_customer(db: Session, conversation_id: int, customer_id: int) -> Conver
         db.commit()
         db.refresh(conversation)
     return conversation
+
+
+def list_conversations(
+    db: Session,
+    dealership_id: int,
+    *,
+    channel: str | None = None,
+    status: str | None = None,
+    search: str | None = None,
+    page: int = 1,
+    page_size: int = 25,
+) -> list[Conversation]:
+    query = db.query(Conversation).filter(Conversation.dealership_id == dealership_id)
+    if channel:
+        query = query.filter(Conversation.channel == channel)
+    if status:
+        query = query.filter(Conversation.status == status)
+    if search:
+        pattern = f"%{search.strip()}%"
+        query = query.filter(Conversation.channel_user_id.ilike(pattern))
+    offset = max(0, (page - 1) * page_size)
+    return (
+        query.order_by(Conversation.updated_at.desc(), Conversation.id.desc())
+        .offset(offset)
+        .limit(page_size)
+        .all()
+    )
+
+
+def count_conversations(
+    db: Session,
+    dealership_id: int,
+    *,
+    channel: str | None = None,
+    status: str | None = None,
+    search: str | None = None,
+) -> int:
+    query = db.query(func.count(Conversation.id)).filter(
+        Conversation.dealership_id == dealership_id
+    )
+    if channel:
+        query = query.filter(Conversation.channel == channel)
+    if status:
+        query = query.filter(Conversation.status == status)
+    if search:
+        pattern = f"%{search.strip()}%"
+        query = query.filter(Conversation.channel_user_id.ilike(pattern))
+    return query.scalar() or 0
+
+
+def get_conversation_for_dealership(
+    db: Session,
+    dealership_id: int,
+    conversation_id: int,
+) -> Conversation:
+    conv = (
+        db.query(Conversation)
+        .filter(
+            Conversation.id == conversation_id,
+            Conversation.dealership_id == dealership_id,
+        )
+        .first()
+    )
+    if conv is None:
+        raise NotFoundError("Conversation not found")
+    return conv
+
+
+def update_conversation_status(
+    db: Session,
+    dealership_id: int,
+    conversation_id: int,
+    *,
+    status: str,
+    staff_user: User,
+    assigned_to_user_id: int | None = None,
+    handoff_reason: str | None = None,
+) -> Conversation:
+    conv = get_conversation_for_dealership(db, dealership_id, conversation_id)
+    now = datetime.now(timezone.utc)
+    prev_status = conv.status
+    conv.status = status
+    meta = dict(conv.channel_metadata or {})
+    if assigned_to_user_id is not None:
+        assignee = (
+            db.query(User)
+            .filter(User.id == assigned_to_user_id, User.dealership_id == dealership_id)
+            .first()
+        )
+        if assignee is None:
+            raise NotFoundError("Staff member not found")
+        meta["assigned_to_user_id"] = assignee.id
+        meta["assigned_to_name"] = assignee.name
+    if handoff_reason is not None:
+        meta["handoff_reason"] = handoff_reason.strip()
+    meta["updated_by_user_id"] = staff_user.id
+    conv.channel_metadata = meta
+    conv.updated_at = now
+    db.commit()
+    db.refresh(conv)
+
+    if prev_status != status:
+        append_message(
+            db,
+            conv.id,
+            sender_type="system",
+            content=(
+                f"Conversation status changed from '{prev_status}' to '{status}' by {staff_user.name}"
+                + (f" ({handoff_reason.strip()})" if handoff_reason and handoff_reason.strip() else "")
+            ),
+            sender_id=staff_user.id,
+        )
+        db.refresh(conv)
+    return conv
+
+
+def add_staff_reply(
+    db: Session,
+    dealership_id: int,
+    conversation_id: int,
+    staff_user: User,
+    content: str,
+) -> ConversationMessage:
+    conv = get_conversation_for_dealership(db, dealership_id, conversation_id)
+    return append_message(
+        db,
+        conv.id,
+        sender_type="staff",
+        content=content.strip(),
+        sender_id=staff_user.id,
+        channel_metadata={"staff_name": staff_user.name, "staff_email": staff_user.email},
+    )
+
+
+def redact_message(
+    db: Session,
+    dealership_id: int,
+    conversation_id: int,
+    message_id: int,
+    staff_user: User,
+    reason: str | None = None,
+) -> ConversationMessage:
+    conv = get_conversation_for_dealership(db, dealership_id, conversation_id)
+    msg = (
+        db.query(ConversationMessage)
+        .filter(
+            ConversationMessage.id == message_id,
+            ConversationMessage.conversation_id == conv.id,
+        )
+        .first()
+    )
+    if msg is None:
+        raise NotFoundError("Message not found")
+
+    now = datetime.now(timezone.utc)
+    meta = dict(msg.channel_metadata or {})
+    meta["redacted"] = True
+    meta["redacted_at"] = now.isoformat()
+    meta["redacted_by_user_id"] = staff_user.id
+    if reason and reason.strip():
+        meta["redaction_reason"] = reason.strip()
+
+    msg.content = "[REDACTED BY STAFF]"
+    msg.channel_metadata = meta
+    db.commit()
+    db.refresh(msg)
+    return msg
 

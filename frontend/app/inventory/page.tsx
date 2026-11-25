@@ -828,7 +828,7 @@ export default function InventoryPage() {
                         </div>
                         {h.notes && (
                           <p className="text-slate-300 text-[11px] italic pl-1 border-l-2 border-slate-700">
-                            "{h.notes}"
+                            &ldquo;{h.notes}&rdquo;
                           </p>
                         )}
                         {h.changed_by_user_email && (
