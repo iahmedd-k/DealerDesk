@@ -26,50 +26,29 @@ import type {
 function channelBadge(channel: string) {
   switch (channel) {
     case "whatsapp":
-      return {
-        label: "WhatsApp",
-        icon: MessageCircle,
-        className: "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30",
-      };
+      return { label: "WhatsApp", icon: MessageCircle, className: "crm-badge-success" };
     case "voice":
-      return {
-        label: "Voice (Vapi)",
-        icon: PhoneCall,
-        className: "bg-purple-500/15 text-purple-300 border border-purple-500/30",
-      };
+      return { label: "Voice (Vapi)", icon: PhoneCall, className: "crm-badge-purple" };
     case "website":
     default:
-      return {
-        label: "Website",
-        icon: Globe,
-        className: "bg-blue-500/15 text-blue-300 border border-blue-500/30",
-      };
+      return { label: "Website", icon: Globe, className: "crm-badge-info" };
   }
 }
 
 function statusBadge(status: string) {
   switch (status) {
     case "handed_off":
-      return {
-        label: "Handoff / Callback",
-        className: "bg-amber-500/20 text-amber-300 border border-amber-500/30",
-      };
+      return { label: "Handoff / Callback", className: "crm-badge-warning" };
     case "closed":
-      return {
-        label: "Closed",
-        className: "bg-slate-500/20 text-slate-300 border border-slate-500/30",
-      };
+      return { label: "Closed", className: "crm-badge-neutral" };
     case "active":
     default:
-      return {
-        label: "Active AI",
-        className: "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30",
-      };
+      return { label: "Active AI", className: "crm-badge-success" };
   }
 }
 
 export default function ConversationInboxPage() {
-  const { activeDealershipId, user } = useAuth();
+  const { activeDealershipId, authReady, user } = useAuth();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [selected, setSelected] = useState<ConversationDetail | null>(null);
   const [staff, setStaff] = useState<StaffUser[]>([]);
@@ -88,6 +67,7 @@ export default function ConversationInboxPage() {
   const canManageTeam = user?.role === "dealership_admin" || user?.role === "manager";
 
   const loadConversations = useCallback(async () => {
+    if (!authReady || !user) return;
     if (!activeDealershipId) {
       setLoadingList(false);
       return;
@@ -128,7 +108,7 @@ export default function ConversationInboxPage() {
     } finally {
       setLoadingList(false);
     }
-  }, [activeDealershipId, canManageTeam, channelFilter, search, statusFilter, user]);
+  }, [activeDealershipId, authReady, canManageTeam, channelFilter, search, statusFilter, user]);
 
   useEffect(() => {
     void loadConversations();
@@ -173,7 +153,7 @@ export default function ConversationInboxPage() {
       setConversations((prev) =>
         prev.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)),
       );
-      setNotice(`Conversation marked as '${nextStatus}'.`);
+      setNotice(`Conversation marked as '${nextStatus.replaceAll("_", " ")}'.`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not update conversation.");
     } finally {
@@ -234,69 +214,54 @@ export default function ConversationInboxPage() {
     <Shell>
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="mb-1 text-xs font-bold uppercase tracking-wider text-blue-300">
-            Multi-Channel Communications
-          </p>
-          <h1 className="text-2xl font-bold text-white">
+          <h1 className="mt-1 text-2xl font-medium text-[#171717] tabular-nums">
             Conversation Inbox &amp; Handoff Queue
           </h1>
-          <p className="mt-1 text-sm text-slate-400">
-            Inspect Website, WhatsApp, and Voice (Vapi) transcripts, manage human handoffs, and reply to customers.
+          <p className="mt-0.5 text-sm text-slate-500">
+            Review Website, WhatsApp, and Voice (Vapi) transcripts, manage human handoffs, and redact sensitive PII.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => void loadConversations()}
-          className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800"
-        >
+        <button type="button" onClick={() => void loadConversations()} className="crm-btn-secondary">
           <RefreshCw className="h-4 w-4" /> Refresh
         </button>
       </div>
 
-      {error ? (
-        <div role="alert" className="mb-4 rounded-lg border border-rose-700 bg-rose-950/40 p-3 text-sm text-rose-200">
+      {error && (
+        <div role="alert" className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
           {error}
         </div>
-      ) : null}
-      {notice ? (
-        <div role="status" className="mb-4 flex items-center gap-2 rounded-lg border border-emerald-700 bg-emerald-950/40 p-3 text-sm text-emerald-200">
+      )}
+      {notice && (
+        <div role="status" className="mb-4 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
           <CheckCircle2 className="h-4 w-4" />
           {notice}
         </div>
-      ) : null}
+      )}
 
-      {/* Filters Toolbar */}
-      <div className="mb-5 flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-4 md:flex-row md:items-center md:justify-between">
-        <div className="relative w-full md:w-72">
+      {/* Filter Toolbar */}
+      <div className="crm-card mb-5 p-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="relative w-full md:w-80">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search phone, email, or session..."
-            className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-xs text-white outline-none focus:border-blue-500"
+            className="crm-input pl-9"
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="text-slate-400">Channel:</span>
-          <select
-            value={channelFilter}
-            onChange={(e) => setChannelFilter(e.target.value)}
-            className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-slate-200"
-          >
+        <div className="flex flex-wrap items-center gap-2.5 text-xs">
+          <span className="font-medium text-slate-500">Channel:</span>
+          <select value={channelFilter} onChange={(e) => setChannelFilter(e.target.value)} className="crm-select w-auto">
             <option value="all">All Channels</option>
             <option value="website">Website</option>
             <option value="whatsapp">WhatsApp</option>
             <option value="voice">Voice (Vapi)</option>
           </select>
 
-          <span className="ml-2 text-slate-400">Queue:</span>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-slate-200"
-          >
+          <span className="font-medium text-slate-500 ml-1">Queue:</span>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="crm-select w-auto">
             <option value="all">All Conversations</option>
             <option value="handed_off">Handoff / Callback Queue</option>
             <option value="active">Active AI</option>
@@ -305,21 +270,21 @@ export default function ConversationInboxPage() {
         </div>
       </div>
 
-      {/* Split Inbox View */}
+      {/* Split-Pane Inbox */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
-        {/* Left Pane: Conversation List */}
-        <div className="rounded-xl border border-slate-800 bg-slate-900/50 lg:col-span-5">
-          <div className="border-b border-slate-800 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
+        {/* Conversation List */}
+        <div className="crm-card overflow-hidden lg:col-span-5">
+          <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
             Conversations ({conversations.length})
           </div>
           {loadingList ? (
-            <div className="p-6 text-center text-xs text-slate-400">Loading conversations...</div>
+            <div className="p-6 text-center text-xs text-slate-500">Loading conversations...</div>
           ) : conversations.length === 0 ? (
-            <div className="p-6 text-center text-xs text-slate-400">
+            <div className="p-6 text-center text-xs text-slate-500">
               No conversations match the selected filters.
             </div>
           ) : (
-            <div className="max-h-[620px] divide-y divide-slate-800/80 overflow-y-auto">
+            <div className="max-h-[620px] divide-y divide-slate-100 overflow-y-auto">
               {conversations.map((conv) => {
                 const ch = channelBadge(conv.channel);
                 const st = statusBadge(conv.status);
@@ -330,30 +295,28 @@ export default function ConversationInboxPage() {
                     key={conv.id}
                     type="button"
                     onClick={() => void selectConversation(conv.id)}
-                    className={`w-full p-4 text-left transition hover:bg-slate-800/60 ${
-                      isSelected ? "bg-slate-800/80 border-l-2 border-blue-500" : ""
+                    className={`w-full p-4 text-left transition hover:bg-slate-50 ${
+                      isSelected ? "bg-blue-50/60 border-l-2 border-blue-600" : ""
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${ch.className}`}>
+                      <span className={`crm-badge ${ch.className}`}>
                         <ChannelIcon className="h-3 w-3" /> {ch.label}
                       </span>
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${st.className}`}>
-                        {st.label}
-                      </span>
+                      <span className={`crm-badge ${st.className}`}>{st.label}</span>
                     </div>
-                    <div className="mt-2 font-mono text-xs font-semibold text-white truncate">
+                    <div className="mt-2 font-mono text-xs font-semibold text-slate-900 truncate">
                       {conv.channel_user_id}
                     </div>
-                    {conv.last_message_preview ? (
-                      <p className="mt-1 line-clamp-2 text-xs text-slate-400">
+                    {conv.last_message_preview && (
+                      <p className="mt-1 line-clamp-2 text-xs text-slate-600">
                         {conv.last_message_preview}
                       </p>
-                    ) : null}
-                    <div className="mt-2 flex items-center justify-between text-[10px] text-slate-500">
+                    )}
+                    <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
                       <span>
                         {conv.message_count} messages
-                        {conv.assigned_to_name ? ` · Assigned: ${conv.assigned_to_name}` : ""}
+                        {conv.assigned_to_name ? ` · ${conv.assigned_to_name}` : ""}
                       </span>
                       <span>{new Date(conv.updated_at).toLocaleString()}</span>
                     </div>
@@ -364,34 +327,33 @@ export default function ConversationInboxPage() {
           )}
         </div>
 
-        {/* Right Pane: Transcript & Handoff Controls */}
-        <div className="flex flex-col rounded-xl border border-slate-800 bg-slate-900/50 lg:col-span-7">
+        {/* Transcript Viewer */}
+        <div className="crm-card flex flex-col overflow-hidden lg:col-span-7">
           {!selected ? (
-            <div className="flex h-96 flex-col items-center justify-center p-8 text-center text-slate-400">
-              <MessageSquare className="mb-3 h-8 w-8 text-slate-600" />
-              <p className="text-sm font-medium text-slate-300">Select a conversation</p>
+            <div className="flex h-96 flex-col items-center justify-center p-8 text-center text-slate-500">
+              <MessageSquare className="mb-3 h-8 w-8 text-slate-300" />
+              <p className="text-sm font-semibold text-slate-700">Select a conversation</p>
               <p className="mt-1 text-xs text-slate-500">
-                View full Website, WhatsApp, or Voice transcripts and manage human handoffs.
+                Inspect transcripts, assign staff, or trigger human handoffs.
               </p>
             </div>
           ) : loadingDetail ? (
-            <div className="p-8 text-center text-xs text-slate-400">Loading transcript...</div>
+            <div className="p-8 text-center text-xs text-slate-500">Loading transcript...</div>
           ) : (
             <>
-              {/* Header & Handoff Controls */}
-              <div className="border-b border-slate-800 p-4 space-y-3">
+              <div className="border-b border-slate-200 bg-slate-50/70 p-4 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-mono text-sm font-bold text-white">
+                      <span className="font-mono text-sm font-medium text-[#171717]">
                         {selected.channel_user_id}
                       </span>
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusBadge(selected.status).className}`}>
+                      <span className={`crm-badge ${statusBadge(selected.status).className}`}>
                         {statusBadge(selected.status).label}
                       </span>
                     </div>
-                    <p className="mt-0.5 text-[11px] text-slate-400">
-                      Conversation #{selected.id} · Channel: {selected.channel}
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      Conversation #{selected.id} · {selected.channel}
                     </p>
                   </div>
 
@@ -400,7 +362,7 @@ export default function ConversationInboxPage() {
                       type="button"
                       disabled={busy || selected.status === "handed_off"}
                       onClick={() => void updateStatus("handed_off")}
-                      className="rounded-lg border border-amber-500/40 bg-amber-500/15 px-2.5 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-500/25 disabled:opacity-50"
+                      className="crm-btn-secondary min-h-8 px-2.5 text-xs border-amber-300 text-amber-800 bg-amber-50 hover:bg-amber-100"
                     >
                       Handoff / Callback
                     </button>
@@ -408,7 +370,7 @@ export default function ConversationInboxPage() {
                       type="button"
                       disabled={busy || selected.status === "active"}
                       onClick={() => void updateStatus("active")}
-                      className="rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-2.5 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/25 disabled:opacity-50"
+                      className="crm-btn-secondary min-h-8 px-2.5 text-xs border-emerald-300 text-emerald-800 bg-emerald-50 hover:bg-emerald-100"
                     >
                       Resume AI
                     </button>
@@ -416,20 +378,15 @@ export default function ConversationInboxPage() {
                       type="button"
                       disabled={busy || selected.status === "closed"}
                       onClick={() => void updateStatus("closed")}
-                      className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700 disabled:opacity-50"
+                      className="crm-btn-secondary min-h-8 px-2.5 text-xs"
                     >
                       Close
                     </button>
                   </div>
                 </div>
 
-                {/* Staff Assignment & Handoff Reason */}
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <select
-                    value={assigneeId}
-                    onChange={(e) => setAssigneeId(e.target.value)}
-                    className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white"
-                  >
+                  <select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} className="crm-select text-xs">
                     <option value="">Unassigned</option>
                     {staff.map((member) => (
                       <option key={member.id} value={member.id}>
@@ -442,15 +399,14 @@ export default function ConversationInboxPage() {
                     value={handoffReason}
                     onChange={(e) => setHandoffReason(e.target.value)}
                     placeholder="Handoff / callback reason (optional)"
-                    className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white"
+                    className="crm-input text-xs"
                   />
                 </div>
               </div>
 
-              {/* Transcript Messages */}
-              <div className="flex-1 space-y-3 overflow-y-auto p-4 max-h-[400px]">
+              <div className="flex-1 space-y-3 overflow-y-auto p-4 max-h-[400px] bg-white">
                 {selected.messages.length === 0 ? (
-                  <p className="text-center text-xs text-slate-500">No messages recorded in this transcript.</p>
+                  <p className="text-center text-xs text-slate-400">No messages recorded.</p>
                 ) : (
                   selected.messages.map((msg) => {
                     const isCustomer = msg.sender_type === "customer";
@@ -458,44 +414,41 @@ export default function ConversationInboxPage() {
                     const isSystem = msg.sender_type === "system";
                     if (isSystem) {
                       return (
-                        <div key={msg.id} className="text-center text-[11px] italic text-slate-500">
+                        <div key={msg.id} className="text-center text-[11px] italic text-slate-400">
                           {msg.content} · {new Date(msg.created_at).toLocaleTimeString()}
                         </div>
                       );
                     }
                     return (
-                      <div
-                        key={msg.id}
-                        className={`flex flex-col ${isCustomer ? "items-start" : "items-end"}`}
-                      >
-                        <div className="mb-1 flex items-center gap-1.5 text-[10px] text-slate-400">
+                      <div key={msg.id} className={`flex flex-col ${isCustomer ? "items-start" : "items-end"}`}>
+                        <div className="mb-1 flex items-center gap-1.5 text-[11px] text-slate-400">
                           {isCustomer ? (
-                            <UserRound className="h-3 w-3 text-slate-400" />
+                            <UserRound className="h-3 w-3" />
                           ) : isStaff ? (
-                            <UserCheck className="h-3 w-3 text-amber-300" />
+                            <UserCheck className="h-3 w-3 text-amber-600" />
                           ) : (
-                            <Bot className="h-3 w-3 text-blue-400" />
+                            <Bot className="h-3 w-3 text-blue-600" />
                           )}
                           <span className="uppercase font-semibold">{msg.sender_type}</span>
                           <span>· {new Date(msg.created_at).toLocaleTimeString()}</span>
-                          {canManageTeam && msg.content !== "[REDACTED BY STAFF]" ? (
+                          {canManageTeam && msg.content !== "[REDACTED BY STAFF]" && (
                             <button
                               type="button"
                               disabled={busy}
                               onClick={() => void redactMessage(msg.id)}
-                              className="ml-1 text-[10px] text-rose-400 hover:text-rose-300 underline"
+                              className="ml-1 text-[11px] font-medium text-rose-600 hover:underline"
                             >
                               Redact
                             </button>
-                          ) : null}
+                          )}
                         </div>
                         <div
-                          className={`max-w-[85%] rounded-xl px-3.5 py-2 text-xs leading-relaxed whitespace-pre-wrap ${
+                          className={`max-w-[85%] rounded-xl px-3.5 py-2.5 text-xs leading-relaxed whitespace-pre-wrap ${
                             isCustomer
-                              ? "bg-slate-800 text-slate-100"
+                              ? "bg-slate-100 text-slate-900 border border-slate-200"
                               : isStaff
-                              ? "bg-amber-600/25 border border-amber-500/30 text-amber-100"
-                              : "bg-blue-600/25 border border-blue-500/30 text-blue-100"
+                              ? "bg-amber-50 text-amber-950 border border-amber-200"
+                              : "bg-blue-600 text-white"
                           }`}
                         >
                           {msg.content}
@@ -506,21 +459,16 @@ export default function ConversationInboxPage() {
                 )}
               </div>
 
-              {/* Staff Reply Box */}
-              <form onSubmit={sendReply} className="border-t border-slate-800 p-3 flex gap-2">
+              <form onSubmit={sendReply} className="border-t border-slate-200 bg-slate-50 p-3 flex gap-2">
                 <input
                   type="text"
                   value={replyText}
                   onChange={(e) => setReplyText(e.target.value)}
                   placeholder="Write a staff reply or callback note..."
                   disabled={busy}
-                  className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-blue-500"
+                  className="crm-input flex-1"
                 />
-                <button
-                  type="submit"
-                  disabled={busy || !replyText.trim()}
-                  className="btn-primary inline-flex items-center gap-1.5 text-xs disabled:opacity-50"
-                >
+                <button type="submit" disabled={busy || !replyText.trim()} className="crm-btn-primary">
                   <Send className="h-3.5 w-3.5" /> Send
                 </button>
               </form>

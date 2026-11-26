@@ -1,5 +1,8 @@
 export const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000/api/v1";
+  process.env.NEXT_PUBLIC_API_URL ??
+  (typeof window !== "undefined"
+    ? `http://${window.location.hostname}:8000/api/v1`
+    : "http://localhost:8000/api/v1");
 
 export class ApiError extends Error {
   errorCode?: string;
@@ -16,6 +19,7 @@ export class ApiError extends Error {
 }
 
 let refreshInProgress: Promise<boolean> | null = null;
+let lastRefreshFailureAt = 0;
 
 function clearLegacyTokenStorage(): void {
   if (typeof window === "undefined") return;
@@ -25,6 +29,7 @@ function clearLegacyTokenStorage(): void {
 
 export async function refreshSession(): Promise<boolean> {
   if (typeof window === "undefined") return false;
+  if (Date.now() - lastRefreshFailureAt < 3000) return false;
   if (refreshInProgress) return refreshInProgress;
 
   refreshInProgress = (async () => {
@@ -36,9 +41,11 @@ export async function refreshSession(): Promise<boolean> {
         body: JSON.stringify({}),
       });
       if (!response.ok) throw new Error("Session refresh failed");
+      lastRefreshFailureAt = 0;
       clearLegacyTokenStorage();
       return true;
     } catch {
+      lastRefreshFailureAt = Date.now();
       clearLegacyTokenStorage();
       window.dispatchEvent(new Event("dealerdesk:auth-expired"));
       return false;

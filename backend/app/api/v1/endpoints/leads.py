@@ -1,7 +1,7 @@
 import math
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -34,10 +34,17 @@ def create_lead(
     dealership_id: int,
     payload: CustomerLeadCreateRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     current_user: User | None = Depends(get_optional_current_user),
     db: Session = Depends(get_db),
 ) -> CustomerLeadResponse:
-    lead = lead_service.create_lead(db, dealership_id, payload, current_user)
+    lead = lead_service.create_lead(
+        db,
+        dealership_id,
+        payload,
+        current_user,
+        background_tasks=background_tasks,
+    )
     audit_service.log_event(
         db,
         action="lead.created",
@@ -103,6 +110,7 @@ def update_lead(
     lead_id: int,
     payload: CustomerLeadUpdateRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(require_dealership_roles(*STAFF_ROLES)),
     db: Session = Depends(get_db),
 ) -> CustomerLeadResponse:
@@ -112,6 +120,7 @@ def update_lead(
         lead_id,
         current_user,
         payload,
+        background_tasks=background_tasks,
     )
     audit_service.log_event(
         db,
@@ -160,12 +169,15 @@ def auto_assign_lead(
     dealership_id: int,
     lead_id: int,
     request: Request,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(
         require_dealership_roles(DEALERSHIP_ADMIN_ROLE, MANAGER_ROLE)
     ),
     db: Session = Depends(get_db),
 ) -> CustomerLeadResponse:
-    lead = lead_service.auto_assign_lead(db, dealership_id, lead_id, current_user)
+    lead = lead_service.auto_assign_lead(
+        db, dealership_id, lead_id, current_user, background_tasks=background_tasks
+    )
     audit_service.log_event(
         db,
         action="lead.auto_assigned",

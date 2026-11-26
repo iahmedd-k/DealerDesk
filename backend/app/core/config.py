@@ -39,12 +39,12 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("DATABASE_POOL_TIMEOUT", "database_pool_timeout"),
     )
     database_pool_recycle: int = Field(
-        default=1800,
+        default=300,
         ge=-1,
         validation_alias=AliasChoices("DATABASE_POOL_RECYCLE", "database_pool_recycle"),
     )
     database_pool_pre_ping: bool = Field(
-        default=True,
+        default=False,
         validation_alias=AliasChoices(
             "DATABASE_POOL_PRE_PING",
             "database_pool_pre_ping",
@@ -226,6 +226,12 @@ class Settings(BaseSettings):
             if self.supabase_url and not self.supabase_key:
                 raise ValueError(
                     "In production, SUPABASE_KEY must be provided if SUPABASE_URL is set"
+                )
+
+            admin_pw = self.dealerdesk_admin_password.get_secret_value().strip()
+            if admin_pw == "adminadmin" or len(admin_pw) < 12:
+                raise ValueError(
+                    "In production, DEALERDESK_ADMIN_PASSWORD cannot be 'adminadmin' and must be at least 12 characters"
                 )
 
         return self

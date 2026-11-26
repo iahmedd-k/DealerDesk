@@ -10,6 +10,7 @@ from pydantic import (
     EmailStr,
     Field,
     computed_field,
+    model_validator,
     field_validator,
 )
 
@@ -360,8 +361,35 @@ class StaffUpdateRequest(BaseModel):
         return value
 
 
+class TestDriveSlotCreateRequest(BaseModel):
+    vehicle_id: int = Field(ge=1)
+    starts_at: datetime
+    ends_at: datetime
+    capacity: int = Field(default=1, ge=1, le=20)
+
+    @field_validator("starts_at", "ends_at")
+    @classmethod
+    def validate_slot_timezone(cls, value: datetime) -> datetime:
+        if value.utcoffset() is None:
+            raise ValueError("Slot timestamps must include a timezone")
+        return value
+
+    @model_validator(mode="after")
+    def validate_slot_range(self) -> "TestDriveSlotCreateRequest":
+        if self.ends_at <= self.starts_at:
+            raise ValueError("ends_at must be after starts_at")
+        return self
+
+
 class TestDriveSlotUpdateRequest(BaseModel):
-    is_active: bool
+    is_active: bool | None = None
+    capacity: int | None = Field(default=None, ge=1, le=20)
+
+    @model_validator(mode="after")
+    def validate_any_field(self) -> "TestDriveSlotUpdateRequest":
+        if self.is_active is None and self.capacity is None:
+            raise ValueError("Provide is_active or capacity to update")
+        return self
 
 
 class TestDriveBookingRequest(BaseModel):

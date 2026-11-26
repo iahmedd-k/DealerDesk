@@ -9,6 +9,7 @@ from app.api.v1.router import router as api_router
 from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
 from app.core.limiter import limiter
+from app.db.base import Base
 from app.db.migrations import (
     ensure_channel_and_hold_tables,
     ensure_crm_lead_enhancements,
@@ -18,6 +19,7 @@ from app.db.migrations import (
     ensure_vehicle_lifecycle_and_audit_columns,
 )
 from app.db.session import engine
+import app.models  # noqa: F401
 from app.middleware.idempotency import IdempotencyMiddleware
 from app.middleware.logging import CorrelationIdMiddleware
 
@@ -28,14 +30,26 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     try:
-        ensure_security_and_idempotency_tables(engine)
-        ensure_channel_and_hold_tables(engine)
-        ensure_vehicle_lifecycle_and_audit_columns(engine)
-        ensure_crm_lead_enhancements(engine)
-        ensure_notification_ledger_table(engine)
-        ensure_governance_and_outbox_tables(engine)
+        Base.metadata.create_all(bind=engine)
     except Exception as exc:
-        logger.warning("Startup schema verification notice: %s", exc)
+        logger.warning("Startup table creation notice: %s", exc)
+
+    for migration in (
+        ensure_security_and_idempotency_tables,
+        ensure_channel_and_hold_tables,
+        ensure_vehicle_lifecycle_and_audit_columns,
+        ensure_crm_lead_enhancements,
+        ensure_notification_ledger_table,
+        ensure_governance_and_outbox_tables,
+    ):
+        try:
+            migration(engine)
+        except Exception as exc:
+            logger.warning(
+                "Startup schema verification notice (%s): %s",
+                migration.__name__,
+                exc,
+            )
     logger.info("DealerDesk backend server started successfully")
     try:
         yield

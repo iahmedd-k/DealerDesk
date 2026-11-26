@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 import logging
 
+from fastapi import BackgroundTasks
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -32,6 +33,7 @@ def create_lead(
     dealership_id: int,
     payload: CustomerLeadCreateRequest,
     current_user: User | None,
+    background_tasks: BackgroundTasks | None = None,
 ) -> CustomerLead:
     assistant_service.validate_assistant_scope(db, dealership_id, current_user)
     if current_user is not None and current_user.role == CUSTOMER_ROLE:
@@ -98,9 +100,9 @@ def create_lead(
             summary=f"Auto-assigned to {auto_rep.name} (round-robin)",
             details={"assigned_to_user_id": auto_rep.id, "mode": "auto"},
         )
-        _notify_lead_assigned(db, dealership_id, saved)
+        _notify_lead_assigned(db, dealership_id, saved, background_tasks=background_tasks)
 
-    notify_new_lead(db, dealership_id, saved)
+    notify_new_lead(db, dealership_id, saved, background_tasks=background_tasks)
     try:
         outbox_service.enqueue_event(
             db,
@@ -161,6 +163,7 @@ def update_lead(
     lead_id: int,
     current_user: User,
     payload: CustomerLeadUpdateRequest,
+    background_tasks: BackgroundTasks | None = None,
 ) -> CustomerLead:
     ensure_dealership_role_access(current_user, dealership_id, *STAFF_ROLES)
     if not payload.model_fields_set:
@@ -314,7 +317,7 @@ def update_lead(
         and saved.assigned_to_user_id is not None
         and saved.assigned_to_user_id != previous_assignee_id
     ):
-        _notify_lead_assigned(db, dealership_id, saved)
+        _notify_lead_assigned(db, dealership_id, saved, background_tasks=background_tasks)
 
     return saved
 
@@ -375,6 +378,7 @@ def auto_assign_lead(
     dealership_id: int,
     lead_id: int,
     current_user: User,
+    background_tasks: BackgroundTasks | None = None,
 ) -> CustomerLead:
     ensure_dealership_role_access(current_user, dealership_id, DEALERSHIP_ADMIN_ROLE, MANAGER_ROLE)
     lead = lead_repository.get_lead(db, dealership_id, lead_id)
@@ -395,7 +399,7 @@ def auto_assign_lead(
         summary=f"Auto-assigned to {rep.name} (round-robin)",
         details={"assigned_to_user_id": rep.id, "mode": "auto"},
     )
-    _notify_lead_assigned(db, dealership_id, saved)
+    _notify_lead_assigned(db, dealership_id, saved, background_tasks=background_tasks)
     return saved
 
 
@@ -498,10 +502,75 @@ def _resolve_vehicle_label(
     return f"{vehicle.model_year} {vehicle.make} {vehicle.model}"
 
 
+def _send_new_lead_emails_task(
+    *,
+    lead_id: int,
+    customer_email: str,
+    customer_name: str,
+    dealership_name: str,
+    dealership_email: str | None,
+    dealership_phone: str | None,
+    vehicle_label: str | None,
+    source: str,
+    lead_phone: str | None,
+    message: str,
+) -> None:
+    try:
+        email_service.send_lead_acknowledgment(
+            recipient=customer_email,
+            customer_name=customer_name,
+            dealership_name=dealership_name,
+            dealership_phone=dealership_phone,
+            vehicle_label=vehicle_label,
+        )
+        if dealership_email:
+            email_service.send_new_lead_alert(
+                recipient=dealership_email,
+                dealership_name=dealership_name,
+                lead_name=customer_name,
+                lead_email=customer_email,
+                lead_phone=lead_phone,
+                source=source,
+                vehicle_label=vehicle_label,
+                message=message,
+            )
+    except Exception as exc:
+        logger.warning("New lead email notification failed for lead %s: %s", lead_id, exc)
+
+
+def _send_assigned_lead_email_task(
+    *,
+    lead_id: int,
+    staff_email: str,
+    staff_name: str,
+    dealership_name: str,
+    lead_name: str,
+    lead_email: str,
+    lead_phone: str | None,
+    vehicle_label: str | None,
+    message: str,
+) -> None:
+    try:
+        email_service.send_lead_assigned_notification(
+            recipient=staff_email,
+            staff_name=staff_name,
+            dealership_name=dealership_name,
+            lead_name=lead_name,
+            lead_email=lead_email,
+            lead_phone=lead_phone,
+            vehicle_label=vehicle_label,
+            message=message,
+            lead_id=lead_id,
+        )
+    except Exception as exc:
+        logger.warning("Lead assignment email failed for lead %s: %s", lead_id, exc)
+
+
 def notify_new_lead(
     db: Session,
     dealership_id: int,
     lead: CustomerLead,
+    background_tasks: BackgroundTasks | None = None,
 ) -> None:
     """Send acknowledgment to the customer and a new-lead alert to the dealership."""
     try:
@@ -509,24 +578,22 @@ def notify_new_lead(
         if dealership is None:
             return
         vehicle_label = _resolve_vehicle_label(db, dealership_id, lead.requested_vehicle_id)
-        email_service.send_lead_acknowledgment(
-            recipient=lead.email,
-            customer_name=lead.name,
-            dealership_name=dealership.name,
-            dealership_phone=dealership.phone,
-            vehicle_label=vehicle_label,
-        )
-        if dealership.email:
-            email_service.send_new_lead_alert(
-                recipient=dealership.email,
-                dealership_name=dealership.name,
-                lead_name=lead.name,
-                lead_email=lead.email,
-                lead_phone=lead.phone,
-                source=lead.source,
-                vehicle_label=vehicle_label,
-                message=lead.message,
-            )
+        kwargs = {
+            "lead_id": lead.id,
+            "customer_email": lead.email,
+            "customer_name": lead.name,
+            "dealership_name": dealership.name,
+            "dealership_email": dealership.email,
+            "dealership_phone": dealership.phone,
+            "vehicle_label": vehicle_label,
+            "source": lead.source,
+            "lead_phone": lead.phone,
+            "message": lead.message,
+        }
+        if background_tasks is not None:
+            background_tasks.add_task(_send_new_lead_emails_task, **kwargs)
+        else:
+            _send_new_lead_emails_task(**kwargs)
     except Exception as exc:
         logger.warning("New lead email notification failed for lead %s: %s", lead.id, exc)
 
@@ -535,6 +602,7 @@ def _notify_lead_assigned(
     db: Session,
     dealership_id: int,
     lead: CustomerLead,
+    background_tasks: BackgroundTasks | None = None,
 ) -> None:
     try:
         if lead.assigned_to_user_id is None:
@@ -546,16 +614,20 @@ def _notify_lead_assigned(
         if staff_user is None or dealership is None:
             return
         vehicle_label = _resolve_vehicle_label(db, dealership_id, lead.requested_vehicle_id)
-        email_service.send_lead_assigned_notification(
-            recipient=staff_user.email,
-            staff_name=staff_user.name,
-            dealership_name=dealership.name,
-            lead_name=lead.name,
-            lead_email=lead.email,
-            lead_phone=lead.phone,
-            vehicle_label=vehicle_label,
-            message=lead.message,
-            lead_id=lead.id,
-        )
+        kwargs = {
+            "lead_id": lead.id,
+            "staff_email": staff_user.email,
+            "staff_name": staff_user.name,
+            "dealership_name": dealership.name,
+            "lead_name": lead.name,
+            "lead_email": lead.email,
+            "lead_phone": lead.phone,
+            "vehicle_label": vehicle_label,
+            "message": lead.message,
+        }
+        if background_tasks is not None:
+            background_tasks.add_task(_send_assigned_lead_email_task, **kwargs)
+        else:
+            _send_assigned_lead_email_task(**kwargs)
     except Exception as exc:
         logger.warning("Lead assignment email failed for lead %s: %s", lead.id, exc)

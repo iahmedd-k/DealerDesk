@@ -16,6 +16,7 @@ from app.core.errors import (
 from app.core.roles import (
     CUSTOMER_ROLE,
     DEALERSHIP_ADMIN_ROLE,
+    MANAGER_ROLE,
     STAFF_ROLES,
 )
 from app.models.user import User
@@ -32,6 +33,7 @@ from app.schemas.workspace import (
     TestDriveCancellationRequest,
     TestDriveRescheduleRequest,
     TestDriveSettingsRequest,
+    TestDriveSlotCreateRequest,
     TestDriveSlotUpdateRequest,
 )
 from app.services import audit_service, dealership_service, email_service, outbox_service
@@ -181,6 +183,53 @@ def get_slot(db: Session, dealership_id: int, slot_id: int) -> TestDriveSlot:
     return _get_slot(db, dealership_id, slot_id)
 
 
+def create_slot(
+    db: Session,
+    dealership_id: int,
+    current_user: User,
+    payload: TestDriveSlotCreateRequest,
+) -> TestDriveSlot:
+    ensure_dealership_role_access(
+        current_user, dealership_id, DEALERSHIP_ADMIN_ROLE, MANAGER_ROLE
+    )
+    dealership_service.get_active_dealership(db, dealership_id)
+    vehicle = db.scalar(
+        select(Vehicle).where(
+            Vehicle.id == payload.vehicle_id,
+            Vehicle.dealership_id == dealership_id,
+        )
+    )
+    if vehicle is None:
+        raise NotFoundError("Vehicle not found")
+    if (
+        not vehicle.is_available
+        or vehicle.status != "available"
+        or not vehicle.test_drive_enabled
+    ):
+        raise UnprocessableEntityError(
+            "Vehicle must be available and test-drive enabled before creating a slot"
+        )
+    if payload.starts_at <= datetime.now(timezone.utc):
+        raise UnprocessableEntityError("Slot start time must be in the future")
+    existing = test_drive_repository.get_slot_for_vehicle_start(
+        db,
+        dealership_id,
+        payload.vehicle_id,
+        payload.starts_at,
+    )
+    if existing is not None:
+        raise ConflictError("A slot already exists for this vehicle at that start time")
+    slot = TestDriveSlot(
+        dealership_id=dealership_id,
+        vehicle_id=payload.vehicle_id,
+        starts_at=payload.starts_at,
+        ends_at=payload.ends_at,
+        capacity=payload.capacity,
+    )
+    test_drive_repository.save(db, slot)
+    return slot
+
+
 def update_slot(
     db: Session,
     dealership_id: int,
@@ -188,11 +237,18 @@ def update_slot(
     current_user: User,
     payload: TestDriveSlotUpdateRequest,
 ) -> TestDriveSlot:
-    ensure_dealership_role_access(current_user, dealership_id, DEALERSHIP_ADMIN_ROLE)
+    ensure_dealership_role_access(
+        current_user, dealership_id, DEALERSHIP_ADMIN_ROLE, MANAGER_ROLE
+    )
     slot = _get_slot(db, dealership_id, slot_id, lock=True)
-    if not payload.is_active and slot.booked_count:
-        raise ConflictError("Booked slots cannot be disabled")
-    slot.is_active = payload.is_active
+    if payload.is_active is not None:
+        if not payload.is_active and slot.booked_count:
+            raise ConflictError("Booked slots cannot be disabled")
+        slot.is_active = payload.is_active
+    if payload.capacity is not None:
+        if payload.capacity < slot.booked_count:
+            raise ConflictError("Capacity cannot be less than booked_count")
+        slot.capacity = payload.capacity
     test_drive_repository.save(db, slot)
     return slot
 

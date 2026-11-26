@@ -196,6 +196,53 @@ export interface StaffUser {
   email: string;
   role: "dealership_admin" | "manager" | "sales_rep" | "dealerdesk_admin";
   is_active: boolean;
+  is_available?: boolean;
+  availability_note?: string | null;
+}
+
+export interface TestDriveSettings {
+  id?: number;
+  dealership_id?: number;
+  opening_time: string;
+  closing_time: string;
+  slot_duration_minutes: number;
+  capacity_per_slot: number;
+  days_open: number[];
+  timezone?: string;
+}
+
+export interface OperationsSummary {
+  dealership_id: number;
+  inventory: { total: number; by_status: Record<string, number>; total_value: number };
+  leads: { total: number; by_status: Record<string, number>; won_deal_value: number };
+  test_drives: { total: number; by_status: Record<string, number> };
+  conversations: { total: number; by_channel: Record<string, number>; handoff_queue: number };
+  observability: { outbox_by_status: Record<string, number>; notifications_by_status: Record<string, number> };
+}
+
+export interface NotificationDelivery {
+  id: number;
+  booking_id: number | null;
+  notification_type: string;
+  channel: string;
+  recipient: string;
+  status: string;
+  error_message: string | null;
+  sent_at: string | null;
+  created_at: string;
+}
+
+export interface OutboxEvent {
+  id: number;
+  event_type: string;
+  aggregate_type: string;
+  aggregate_id: string;
+  status: string;
+  attempts: number;
+  last_error: string | null;
+  next_retry_at: string | null;
+  delivered_at: string | null;
+  created_at: string;
 }
 
 export interface StaffInvitation {

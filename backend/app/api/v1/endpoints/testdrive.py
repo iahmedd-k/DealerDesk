@@ -3,7 +3,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.core.roles import DEALERSHIP_ADMIN_ROLE, STAFF_ROLES
+from app.core.roles import DEALERSHIP_ADMIN_ROLE, MANAGER_ROLE, STAFF_ROLES
 from app.db.session import get_db
 from app.dependencies.auth import get_current_user
 from app.dependencies.workspace import require_dealership_roles
@@ -20,6 +20,7 @@ from app.schemas.workspace import (
     TestDriveRescheduleRequest,
     TestDriveSettingsRequest,
     TestDriveSettingsResponse,
+    TestDriveSlotCreateRequest,
     TestDriveSlotResponse,
     TestDriveSlotUpdateRequest,
 )
@@ -123,13 +124,34 @@ def get_test_drive_slot(
     return test_drive_service.get_slot(db, dealership_id, slot_id)
 
 
+@router.post(
+    "/test-drive-slots",
+    response_model=TestDriveSlotResponse,
+    status_code=201,
+)
+def create_test_drive_slot(
+    dealership_id: int,
+    payload: TestDriveSlotCreateRequest,
+    current_user: User = Depends(
+        require_dealership_roles(DEALERSHIP_ADMIN_ROLE, MANAGER_ROLE)
+    ),
+    db: Session = Depends(get_db),
+) -> TestDriveSlot:
+    return test_drive_service.create_slot(
+        db,
+        dealership_id,
+        current_user,
+        payload,
+    )
+
+
 @router.patch("/test-drive-slots/{slot_id}", response_model=TestDriveSlotResponse)
 def update_test_drive_slot(
     dealership_id: int,
     slot_id: int,
     payload: TestDriveSlotUpdateRequest,
     current_user: User = Depends(
-        require_dealership_roles(DEALERSHIP_ADMIN_ROLE)
+        require_dealership_roles(DEALERSHIP_ADMIN_ROLE, MANAGER_ROLE)
     ),
     db: Session = Depends(get_db),
 ) -> TestDriveSlot:

@@ -179,5 +179,8 @@ def find_least_loaded_sales_rep(db: Session, dealership_id: int) -> User | None:
 
 
 def delete_lead(db: Session, lead: CustomerLead) -> None:
+    db.query(LeadActivity).filter(LeadActivity.lead_id == lead.id).delete(
+        synchronize_session=False
+    )
     db.delete(lead)
     db.commit()

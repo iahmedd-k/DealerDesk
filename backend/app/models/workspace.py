@@ -377,6 +377,12 @@ class CustomerLead(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
+    activities: Mapped[list["LeadActivity"]] = relationship(
+        "LeadActivity",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
 
 class LeadActivity(Base):
     __tablename__ = "lead_activities"
@@ -394,6 +400,7 @@ class LeadActivity(Base):
     actor_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    actor_user: Mapped["User | None"] = relationship("User", lazy="joined")
     activity_type: Mapped[str] = mapped_column(String(32), index=True)
     summary: Mapped[str] = mapped_column(Text)
     details: Mapped[dict | None] = mapped_column(JSON, nullable=True)

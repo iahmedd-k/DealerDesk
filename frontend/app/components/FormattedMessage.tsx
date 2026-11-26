@@ -20,7 +20,7 @@ export default function FormattedMessage({ content }: FormattedMessageProps) {
   const lines = cleaned.split("\n");
 
   return (
-    <div className="space-y-2 text-xs leading-relaxed text-slate-200">
+    <div className="space-y-2 text-xs leading-relaxed text-slate-800">
       {lines.map((line, idx) => {
         const trimmed = line.trim();
         if (!trimmed) {
@@ -60,7 +60,7 @@ function renderFormattedInline(text: string): React.ReactNode {
     const token = match[0];
     if (token.startsWith("**") && token.endsWith("**")) {
       parts.push(
-        <strong key={match.index} className="font-semibold text-white">
+        <strong key={match.index} className="font-semibold text-slate-900">
           {token.slice(2, -2)}
         </strong>
       );
@@ -68,7 +68,7 @@ function renderFormattedInline(text: string): React.ReactNode {
       parts.push(
         <code
           key={match.index}
-          className="rounded bg-slate-900/80 px-1 py-0.5 font-mono text-[11px] text-blue-300 border border-slate-700/60"
+          className="rounded bg-white px-1 py-0.5 font-mono text-[11px] text-blue-700 border border-slate-200"
         >
           {token.slice(1, -1)}
         </code>

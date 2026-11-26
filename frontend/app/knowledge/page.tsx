@@ -2,43 +2,45 @@
 
 import { useEffect, useState } from "react";
 import {
-  BookOpen,
   FileText,
-  Upload,
   Search,
-  CheckCircle2,
+  Upload,
   Trash2,
-  Sparkles,
-  Layers,
   X,
-  Filter,
+  AlertCircle,
+  BookOpen,
 } from "lucide-react";
 import Shell from "../components/Shell";
 import { useAuth } from "../providers";
 import { api } from "../api";
-import type { KnowledgeDocument, Brand } from "../lib/types";
+import type { Brand, KnowledgeDocument } from "../lib/types";
 
 export default function KnowledgePage() {
-  const { user, activeDealershipId } = useAuth();
+  const { user, authReady, activeDealershipId } = useAuth();
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<Array<{ content: string; source: string; score: number }>>([]);
-  const [searching, setSearching] = useState(false);
-
-  // Modal
   const [showUploadModal, setShowUploadModal] = useState(false);
-  const [docBrand, setDocBrand] = useState<string>("all");
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
 
-  const isStaff = user && user.role !== "customer";
+  const [docBrand, setDocBrand] = useState<number | "all">("all");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadBrandId, setUploadBrandId] = useState<number | "">("");
+  const [uploading, setUploading] = useState(false);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState<
+    Array<{ content: string; score: number; source: string }>
+  >([]);
+
+  const isStaff = Boolean(user && user.role !== "customer");
 
   useEffect(() => {
+    if (!authReady || !user) return;
     if (!activeDealershipId) {
       setLoading(false);
-      setError("Select a dealership workspace to view knowledge documents.");
+      setError("Select a dealership workspace to manage knowledge documents.");
       return;
     }
 
@@ -46,16 +48,19 @@ export default function KnowledgePage() {
     setLoading(true);
     setError("");
     Promise.all([
-      api<KnowledgeDocument[]>(`/dealerships/${activeDealershipId}/knowledge/documents`),
+      api<KnowledgeDocument[]>(
+        `/dealerships/${activeDealershipId}/knowledge/documents`,
+      ),
       api<Brand[]>(`/dealerships/${activeDealershipId}/brands`),
     ])
-      .then(([nextDocuments, nextBrands]) => {
+      .then(([nextDocs, nextBrands]) => {
         if (cancelled) return;
-        setDocuments(nextDocuments);
+        setDocuments(nextDocs);
         setBrands(nextBrands);
       })
       .catch((cause: unknown) => {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : "Could not load knowledge documents.");
+        if (!cancelled)
+          setError(cause instanceof Error ? cause.message : "Could not load knowledge documents.");
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -64,38 +69,45 @@ export default function KnowledgePage() {
     return () => {
       cancelled = true;
     };
-  }, [activeDealershipId]);
+  }, [authReady, user, activeDealershipId]);
 
   async function handleUpload(e: React.FormEvent) {
     e.preventDefault();
-    if (!activeDealershipId || !uploadFile) return;
+    if (!activeDealershipId || !selectedFile) return;
+    setUploading(true);
     setError("");
-    const formData = new FormData();
-    formData.append("file", uploadFile);
-    if (docBrand !== "all") formData.append("brand_id", docBrand);
     try {
+      const form = new FormData();
+      form.append("file", selectedFile);
+      if (uploadBrandId) {
+        form.append("brand_id", String(uploadBrandId));
+      }
       const created = await api<KnowledgeDocument>(
         `/dealerships/${activeDealershipId}/knowledge/documents`,
-        { method: "POST", body: formData },
+        { method: "POST", body: form },
       );
       setDocuments((current) => [created, ...current]);
+      setSelectedFile(null);
+      setUploadBrandId("");
       setShowUploadModal(false);
-      setUploadFile(null);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not index this document.");
+      setError(cause instanceof Error ? cause.message : "Could not upload document.");
+    } finally {
+      setUploading(false);
     }
   }
 
-  async function handleDelete(id: number) {
-    if (!activeDealershipId) return;
+  async function handleDelete(doc: KnowledgeDocument) {
+    if (!activeDealershipId || !window.confirm(`Delete "${doc.filename}"?`)) return;
     setError("");
     try {
-      await api<void>(`/dealerships/${activeDealershipId}/knowledge/documents/${id}`, {
-        method: "DELETE",
-      });
-      setDocuments((current) => current.filter((document) => document.id !== id));
+      await api<void>(
+        `/dealerships/${activeDealershipId}/knowledge/documents/${doc.id}`,
+        { method: "DELETE" },
+      );
+      setDocuments((current) => current.filter((item) => item.id !== doc.id));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not delete this document.");
+      setError(cause instanceof Error ? cause.message : "Could not delete document.");
     }
   }
 
@@ -105,21 +117,29 @@ export default function KnowledgePage() {
     setSearching(true);
     setError("");
     try {
-      const results = await api<Array<{
-        content: string;
-        score: number;
-        filename: string;
-        page_number: number | null;
-        chunk_index: number;
-      }>>(`/dealerships/${activeDealershipId}/knowledge/search`, {
+      const results = await api<
+        Array<{
+          content: string;
+          score: number;
+          filename: string;
+          page_number: number | null;
+          chunk_index: number;
+        }>
+      >(`/dealerships/${activeDealershipId}/knowledge/search`, {
         method: "POST",
-        body: JSON.stringify({ query: searchQuery.trim(), brand_id: docBrand === "all" ? null : Number(docBrand), limit: 5 }),
+        body: JSON.stringify({
+          query: searchQuery.trim(),
+          brand_id: docBrand === "all" ? null : Number(docBrand),
+          limit: 5,
+        }),
       });
-      setSearchResults(results.map((result) => ({
-        content: result.content,
-        score: result.score,
-        source: `${result.filename}${result.page_number ? ` (page ${result.page_number})` : ""}, chunk ${result.chunk_index + 1}`,
-      })));
+      setSearchResults(
+        results.map((result) => ({
+          content: result.content,
+          score: result.score,
+          source: `${result.filename}${result.page_number ? ` (page ${result.page_number})` : ""}, chunk ${result.chunk_index + 1}`,
+        })),
+      );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Knowledge search failed.");
     } finally {
@@ -129,204 +149,254 @@ export default function KnowledgePage() {
 
   return (
     <Shell>
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="h-2 w-2 rounded-full bg-blue-500" />
-            <p className="text-xs font-bold uppercase tracking-wider text-blue-400">
-              RAG Intelligence & Documentation
-            </p>
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-white">
+          <h1 className="text-2xl font-medium tracking-tight text-[#171717]">
             Knowledge Base & Document Center
           </h1>
-          <p className="text-xs text-slate-400">
-            Ingest PDFs, TXT, and Markdown to semantically ground the Dealership AI Copilot
+          <p className="text-xs text-slate-500 mt-0.5">
+            Ingest dealership policies, brochures, and warranty PDFs to ground the AI assistant
           </p>
         </div>
 
-        {error && <div role="alert" className="mb-4 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">{error}</div>}
-        {loading && <p className="mb-4 text-xs text-slate-400">Loading knowledge documents...</p>}
-        {!loading && !error && documents.length === 0 && (
-          <p className="mb-4 rounded-lg border border-slate-800 bg-slate-900 p-4 text-sm text-slate-400">No documents have been indexed for this dealership.</p>
-        )}
-
         {isStaff && (
-          <button onClick={() => setShowUploadModal(true)} className="btn-primary">
+          <button
+            type="button"
+            onClick={() => setShowUploadModal(true)}
+            className="crm-btn-primary"
+          >
             <Upload className="h-4 w-4" />
-            <span>Upload Document</span>
+            Upload Document
           </button>
         )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-        {/* Left 2 Cols: Ingested Documents List */}
-        <div className="lg:col-span-2 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-bold text-white">Ingested Dealership Documents</h2>
-            <span className="text-xs text-slate-400 font-mono">{documents.length} Indexed Files</span>
+      {error && (
+        <div className="mb-5 flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-medium text-rose-700">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Left 2 cols: Indexed Documents */}
+        <div className="lg:col-span-2 crm-card overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <BookOpen className="h-4 w-4 text-blue-600" />
+              <h2 className="text-sm font-medium text-[#171717]">
+                Indexed Documents ({documents.length})
+              </h2>
+            </div>
           </div>
 
-          <div className="erp-table-container">
-            <table className="erp-table">
-              <thead>
-                <tr>
-                  <th>Document Name</th>
-                  <th>Brand Scope</th>
-                  <th>Format</th>
-                  <th>Chunks</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {documents.map((doc) => (
-                  <tr key={doc.id}>
-                    <td>
-                      <div className="flex items-center gap-2.5">
-                        <div className="h-8 w-8 rounded bg-blue-500/10 flex items-center justify-center text-blue-400 flex-shrink-0">
-                          <FileText className="h-4 w-4" />
-                        </div>
-                        <div>
-                          <div className="font-bold text-white text-xs">{doc.filename ?? doc.title ?? "Untitled document"}</div>
-                          <div className="text-[10px] text-slate-500">
-                            Indexed {new Date(doc.created_at).toLocaleDateString()}
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-                    <td><span className="badge badge-neutral">{brands.find((brand) => brand.id === doc.brand_id)?.name ?? "All Brands"}</span></td>
-                    <td>
-                      <span className="font-mono text-[11px] text-slate-400 uppercase">
-                        {(doc.media_type ?? doc.mime_type ?? "").split("/")[1] || "FILE"}
-                      </span>
-                    </td>
-                    <td>
-                      <span className="badge badge-success">{doc.chunk_count} Chunks</span>
-                    </td>
-                    <td>
-                      {isStaff && (
-                        <button
-                          onClick={() => handleDelete(doc.id)}
-                          className="text-slate-500 hover:text-rose-400 transition-colors p-1"
-                          title="Delete Document"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      )}
-                    </td>
+          {loading ? (
+            <p className="p-8 text-center text-sm text-slate-500">
+              Loading knowledge documents...
+            </p>
+          ) : documents.length === 0 ? (
+            <div className="p-10 text-center">
+              <FileText className="h-9 w-9 text-slate-300 mx-auto mb-2" />
+              <p className="text-sm font-semibold text-slate-900">No documents indexed</p>
+              <p className="text-xs text-slate-500 mt-1">
+                Upload PDF, TXT, or Markdown files to build your dealership knowledge base.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="crm-table">
+                <thead>
+                  <tr>
+                    <th>Document</th>
+                    <th>Brand</th>
+                    <th>Chunks</th>
+                    <th>Status</th>
+                    {isStaff && <th className="text-right">Action</th>}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {documents.map((doc) => {
+                    const brandName =
+                      brands.find((b) => b.id === doc.brand_id)?.name || "All Brands";
+                    return (
+                      <tr key={doc.id}>
+                        <td>
+                          <div className="font-semibold text-slate-900 text-xs">
+                            {doc.filename || doc.title || "Untitled"}
+                          </div>
+                          <div className="text-[11px] text-slate-500">
+                            {(doc.media_type || doc.mime_type || "file").toUpperCase()} ·{" "}
+                            {new Date(doc.created_at).toLocaleDateString()}
+                          </div>
+                        </td>
+                        <td className="text-xs text-slate-600">{brandName}</td>
+                        <td className="font-mono text-xs text-slate-700">{doc.chunk_count}</td>
+                        <td>
+                          <span
+                            className={`crm-badge ${doc.status === "ready" || doc.status === "indexed"
+                              ? "crm-badge-success"
+                              : doc.status === "failed"
+                                ? "crm-badge-danger"
+                                : "crm-badge-warning"
+                              }`}
+                          >
+                            {doc.status}
+                          </span>
+                        </td>
+                        {isStaff && (
+                          <td className="text-right">
+                            <button
+                              type="button"
+                              onClick={() => handleDelete(doc)}
+                              className="crm-btn-danger py-1 px-2.5 text-xs"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Delete
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
-        {/* Right 1 Col: Semantic Search Test Bench */}
-        <div className="space-y-4">
-          <h2 className="text-base font-bold text-white flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-purple-400" />
-            Semantic Retrieval Test Bench
-          </h2>
-
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm space-y-4 text-xs">
-            <p className="text-slate-400 leading-relaxed">
-              Verify RAG semantic matching across indexed document chunks for the AI Copilot:
+        {/* Right col: Semantic Search Tester */}
+        <div className="crm-card p-5 space-y-4">
+          <div>
+            <h2 className="text-sm font-medium text-[#171717]">Semantic Retrieval Test</h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Verify what chunks the AI assistant retrieves for customer questions.
             </p>
+          </div>
 
-            <form onSubmit={handleSemanticSearch} className="space-y-3">
+          <form onSubmit={handleSemanticSearch} className="space-y-3">
+            <select
+              value={docBrand}
+              onChange={(e) =>
+                setDocBrand(e.target.value === "all" ? "all" : Number(e.target.value))
+              }
+              className="crm-select"
+            >
+              <option value="all">All Brands</option>
+              {brands.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+
+            <div className="flex gap-2">
               <input
                 type="text"
-                placeholder="e.g. What are the warranty terms for Toyota?"
+                placeholder="Ask a warranty or policy question..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white placeholder-slate-500 outline-none focus:border-purple-500"
+                className="crm-input"
               />
               <button
                 type="submit"
                 disabled={searching || !searchQuery.trim()}
-                className="btn-primary w-full justify-center bg-purple-600 hover:bg-purple-700 text-xs py-2 disabled:opacity-40"
+                className="crm-btn-primary shrink-0"
               >
-                {searching ? "Running Embedding Search..." : "Probe Semantic Chunks"}
+                <Search className="h-4 w-4" />
               </button>
-            </form>
+            </div>
+          </form>
 
-            {searchResults.length > 0 && (
-              <div className="space-y-3 pt-3 border-t border-slate-800">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Retrieved Passages ({searchResults.length}):
-                </span>
-                {searchResults.map((r, i) => (
-                  <div key={i} className="bg-slate-950 p-3 rounded-lg border border-slate-800 space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-bold text-purple-300 truncate max-w-[200px]">
-                        {r.source}
-                      </span>
-                      <span className="badge badge-success text-[10px]">
-                        Score: {(r.score * 100).toFixed(0)}%
-                      </span>
-                    </div>
-                    <p className="text-slate-300 text-[11px] leading-relaxed italic">
-                      &quot;{r.content}&quot;
-                    </p>
+          <div className="space-y-2.5 pt-2">
+            {searchResults.length === 0 ? (
+              <p className="text-xs text-slate-500">
+                Run a query to inspect matching document excerpts and similarity scores.
+              </p>
+            ) : (
+              searchResults.map((res, i) => (
+                <div
+                  key={i}
+                  className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-1.5"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-semibold text-blue-700 truncate">
+                      {res.source}
+                    </span>
+                    <span className="crm-badge crm-badge-info">
+                      {(res.score * 100).toFixed(0)}%
+                    </span>
                   </div>
-                ))}
-              </div>
+                  <p className="text-xs text-slate-700 leading-relaxed">{res.content}</p>
+                </div>
+              ))
             )}
           </div>
         </div>
       </div>
 
-      {/* Upload Document Modal */}
+      {/* Upload Modal */}
       {showUploadModal && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <div className="p-5 border-b border-slate-800 flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-bold text-white">Ingest Knowledge Document</h3>
-                <p className="text-xs text-slate-400">Chunked and vector indexed for AI Assistant grounding</p>
-              </div>
-              <button onClick={() => setShowUploadModal(false)} className="text-slate-400 hover:text-white">
-                <X className="h-5 w-5" />
+        <div className="crm-modal-overlay">
+          <div className="crm-modal max-w-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-medium text-[#171717]">Upload Knowledge Document</h2>
+              <button
+                type="button"
+                onClick={() => setShowUploadModal(false)}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"
+              >
+                <X className="h-4 w-4" />
               </button>
             </div>
 
-            <form onSubmit={handleUpload} className="p-5 space-y-4 text-xs">
+            <form onSubmit={handleUpload} className="space-y-4">
               <div>
-                <label className="text-slate-300 font-semibold mb-1 block">Document file</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Document File (PDF, TXT, MD)
+                </label>
                 <input
                   type="file"
                   required
-                  accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown"
-                  onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white"
+                  accept=".pdf,.txt,.md"
+                  onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                  className="text-xs text-slate-600 file:mr-3 file:rounded-lg file:border file:border-slate-200 file:bg-white file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-slate-700 hover:file:bg-slate-50"
                 />
               </div>
 
               <div>
-                <label className="text-slate-300 font-semibold mb-1 block">Brand Scope</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Brand Scope (Optional)
+                </label>
                 <select
-                  value={docBrand}
-                  onChange={(e) => setDocBrand(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white"
+                  value={uploadBrandId}
+                  onChange={(e) =>
+                    setUploadBrandId(e.target.value ? Number(e.target.value) : "")
+                  }
+                  className="crm-select"
                 >
-                  <option value="all">Global / All Dealership Brands</option>
-                  {brands.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name}
+                  <option value="">General Dealership Knowledge</option>
+                  {brands.map((brand) => (
+                    <option key={brand.id} value={brand.id}>
+                      {brand.name}
                     </option>
                   ))}
                 </select>
               </div>
 
-              <p className="text-[11px] text-slate-500">PDF, Markdown, and plain-text files up to 10 MB are supported.</p>
-
-              <div className="pt-4 border-t border-slate-800 flex justify-end gap-2">
-                <button type="button" onClick={() => setShowUploadModal(false)} className="btn-secondary">
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowUploadModal(false)}
+                  className="crm-btn-secondary"
+                >
                   Cancel
                 </button>
-                <button type="submit" disabled={!uploadFile} className="btn-primary disabled:opacity-50">
-                  Index Document
+                <button
+                  type="submit"
+                  disabled={uploading || !selectedFile}
+                  className="crm-btn-primary"
+                >
+                  {uploading ? "Indexing..." : "Upload & Index"}
                 </button>
               </div>
             </form>

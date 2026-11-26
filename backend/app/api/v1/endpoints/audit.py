@@ -2,8 +2,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from app.core.roles import DEALERSHIP_ADMIN_ROLE, MANAGER_ROLE
 from app.db.session import get_db
-from app.dependencies.auth import get_current_user
+from app.dependencies.workspace import require_dealership_roles
 from app.models.user import User
 from app.services import audit_service
 
@@ -24,7 +25,9 @@ def list_audit_logs(
     resource_type: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=100),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(
+        require_dealership_roles(DEALERSHIP_ADMIN_ROLE, MANAGER_ROLE)
+    ),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     items, total = audit_service.list_dealership_audit_logs(
