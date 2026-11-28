@@ -47,13 +47,13 @@ backend/
 │   │   ├── router.py           # Aggregates all v1 routers under /api/v1
 │   │   └── endpoints/          # auth, dealerships, brands, vehicles,
 │   │                           # staff, testdrive, health
-│   ├── core/                   # Settings and Supabase client factory
-│   ├── db/                     # Base, engine/session, startup migration
+│   ├── core/                   # Settings, Redis client, safety, and Supabase client factory
+│   ├── db/                     # Base, engine/session, startup migrations
 │   ├── dependencies/           # Current-user and role dependencies
-│   ├── models/                 # SQLAlchemy models (user, workspace)
+│   ├── models/                 # SQLAlchemy models (user, workspace, channel, audit, idempotency)
 │   ├── repositories/           # User and dealership data access
 │   ├── schemas/                # Pydantic request/response models
-│   ├── services/               # Auth, dealership, sales agent, verification, slot holds
+│   ├── services/               # Auth, dealership, assistant, dealership agent, sales agent, verification, slot holds
 │   ├── adapters/               # Website, WhatsApp, Voice channel adapters
 │   ├── orchestration/          # Central multi-channel orchestrator
 │   └── tools/                  # Deterministic sales agent inventory/booking tools

@@ -203,7 +203,7 @@ export default function DealershipsPage() {
     <Shell>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-medium tracking-tight text-[#171717]">
+          <h1 className="crm-page-title">
             SaaS Dealerships & Plans
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -252,14 +252,14 @@ export default function DealershipsPage() {
         <div className="crm-kpi">
           <p className="text-xs font-medium text-slate-500">Platform Vehicles</p>
           <p className="text-2xl font-medium text-[#171717] tabular-nums mt-1 flex items-center gap-2">
-            <Car className="h-5 w-5 text-blue-600" />
+            <Car className="h-5 w-5 text-slate-500" />
             {totalVehicles}
           </p>
         </div>
         <div className="crm-kpi">
           <p className="text-xs font-medium text-slate-500">Registered Brands</p>
           <p className="text-2xl font-medium text-[#171717] tabular-nums mt-1 flex items-center gap-2">
-            <Layers className="h-5 w-5 text-indigo-600" />
+            <Layers className="h-5 w-5 text-slate-500" />
             {totalBrands}
           </p>
         </div>
@@ -334,7 +334,7 @@ export default function DealershipsPage() {
                   <tr key={d.id}>
                     <td>
                       <div className="font-semibold text-slate-900 flex items-center gap-1.5">
-                        <Building2 className="h-3.5 w-3.5 text-blue-600" />
+                        <Building2 className="h-3.5 w-3.5 text-slate-500" />
                         {d.name}
                       </div>
                       <div className="text-xs text-slate-500">
@@ -342,7 +342,7 @@ export default function DealershipsPage() {
                       </div>
                     </td>
                     <td>
-                      <span className="crm-badge crm-badge-info uppercase">
+                      <span className="crm-badge crm-badge-info capitalize">
                         {d.subscription_plan || "pro"}
                       </span>
                     </td>

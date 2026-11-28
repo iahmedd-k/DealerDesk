@@ -31,15 +31,15 @@ DealerDesk is a multi-dealership vehicle dealership management backend. It provi
 - Dealership workspaces with timezone-aware configuration.
 - Brand and vehicle inventory management with soft-delete history.
 - Multi-channel AI agent architecture (Website Chatbot, WhatsApp Business, Voice Telephony).
-- Separate Customer Sales Agent and Internal CRM Assistant roles.
+- Separate Customer Sales Agent (`sales_agent_service.py`) and Action-Capable Dealership Operations Assistant (`assistant_service.py` + `dealership_agent_service.py`).
 - Secure customer verification & OTP flow with temporary slot hold leases.
 - Staff invitations, roles, and lifecycle management.
-- Test-drive scheduling with capacity, timezone, and DST handling.
-- Optional transactional email (Resend) and Supabase Storage for brand logos.
+- Test-drive scheduling with capacity, timezone, DST handling, and `completed` / `no_show` outcome tracking.
+- Optional Upstash Redis read caching, Resend transactional email, and Supabase Storage for brand logos and vehicle images.
 
-**Stack:** FastAPI · SQLAlchemy 2.0 · PostgreSQL · Pydantic v2 · PyJWT · Argon2 · pytest · Ruff.
+**Stack:** FastAPI · SQLAlchemy 2.0 · PostgreSQL · Next.js 15 · Tailwind CSS · Upstash Redis · Pydantic v2 · PyJWT · Argon2 · pytest · Ruff.
 
-**Status:** Backend implemented. The `frontend/` directory currently contains dependencies only; no frontend source is implemented. See [Roadmap & Limitations](roadmap.md).
+**Status:** Full-stack backend API and Next.js 15 frontend CRM/showroom implemented. See [Roadmap & Limitations](roadmap.md).
 
 ## Quick links
 

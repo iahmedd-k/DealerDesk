@@ -24,6 +24,13 @@ class Conversation(Base):
     __table_args__ = (
         Index("ix_conversations_dealership_channel", "dealership_id", "channel"),
         Index("ix_conversations_channel_user", "channel", "channel_user_id"),
+        Index(
+            "uq_conversations_email_thread",
+            "dealership_id",
+            "channel",
+            "external_thread_id",
+            unique=True,
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
@@ -31,7 +38,10 @@ class Conversation(Base):
         ForeignKey("dealerships.id", ondelete="CASCADE"), index=True
     )
     channel: Mapped[str] = mapped_column(String(32), index=True)  # website, whatsapp, voice
-    channel_user_id: Mapped[str] = mapped_column(String(128), index=True)  # phone number or session token
+    channel_user_id: Mapped[str] = mapped_column(String(320), index=True)  # email, phone number, or session token
+    external_thread_id: Mapped[str | None] = mapped_column(
+        String(256), nullable=True
+    )
     customer_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -55,6 +65,12 @@ class ConversationMessage(Base):
     __tablename__ = "conversation_messages"
     __table_args__ = (
         Index("ix_conversation_messages_conv_id", "conversation_id"),
+        Index(
+            "uq_conversation_messages_external_id",
+            "conversation_id",
+            "external_message_id",
+            unique=True,
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
@@ -66,6 +82,9 @@ class ConversationMessage(Base):
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     content: Mapped[str] = mapped_column(Text)
+    external_message_id: Mapped[str | None] = mapped_column(
+        String(256), nullable=True
+    )
     channel_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
@@ -120,5 +139,39 @@ class OTPVerification(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class TwilioWebhookReceipt(Base):
+    __tablename__ = "twilio_webhook_receipts"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    message_sid: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    dealership_id: Mapped[int] = mapped_column(
+        ForeignKey("dealerships.id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(24), default="processing")
+    response_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class TwilioDeliveryStatus(Base):
+    __tablename__ = "twilio_delivery_statuses"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    message_sid: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    dealership_id: Mapped[int] = mapped_column(
+        ForeignKey("dealerships.id", ondelete="CASCADE"), index=True
+    )
+    recipient: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(24))
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

@@ -21,6 +21,8 @@ logger = logging.getLogger("dealerdesk.reminders")
 
 REMINDER_24H = "booking_reminder_24h"
 REMINDER_2H = "booking_reminder_2h"
+MAX_DELIVERY_ATTEMPTS = 5
+INITIAL_RETRY_DELAY = timedelta(minutes=5)
 
 
 def _utc(value: datetime) -> datetime:
@@ -78,6 +80,8 @@ def process_due_booking_reminders(
         "evaluated": len(rows),
         "sent_24h": 0,
         "sent_2h": 0,
+        "pending": 0,
+        "retried": 0,
         "skipped_already_delivered": 0,
         "failed": 0,
     }
@@ -95,10 +99,19 @@ def process_due_booking_reminders(
             select(NotificationDelivery).where(
                 NotificationDelivery.booking_id == booking.id,
                 NotificationDelivery.notification_type == notif_type,
-            )
+            ).with_for_update(skip_locked=True)
         )
-        if existing is not None:
+        if existing is not None and existing.status in {"sent", "skipped_synthetic"}:
             stats["skipped_already_delivered"] += 1
+            continue
+        if existing is not None and (
+            existing.attempts >= MAX_DELIVERY_ATTEMPTS
+            or (
+                existing.next_retry_at is not None
+                and _utc(existing.next_retry_at) > now
+            )
+        ):
+            stats["pending" if existing.status in {"pending", "processing"} else "failed"] += 1
             continue
 
         if dry_run:
@@ -107,6 +120,35 @@ def process_due_booking_reminders(
             else:
                 stats["sent_24h"] += 1
             continue
+
+        if existing is None:
+            record = NotificationDelivery(
+                dealership_id=dealership.id,
+                booking_id=booking.id,
+                notification_type=notif_type,
+                channel="email",
+                recipient=customer.email,
+                status="processing",
+                attempts=1,
+                next_retry_at=now + INITIAL_RETRY_DELAY,
+                last_attempt_at=now,
+                created_at=now,
+            )
+            db.add(record)
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                stats["skipped_already_delivered"] += 1
+                continue
+            existing = record
+        else:
+            existing.status = "processing"
+            existing.attempts += 1
+            existing.last_attempt_at = now
+            existing.next_retry_at = now + INITIAL_RETRY_DELAY
+            db.commit()
+            stats["retried"] += 1
 
         zone = ZoneInfo(dealership.timezone)
         starts_local = starts_utc.astimezone(zone).strftime("%b %d, %Y at %I:%M %p")
@@ -140,30 +182,28 @@ def process_due_booking_reminders(
             )
 
         ledger_status = _map_delivery_status(delivery_result)
-        record = NotificationDelivery(
-            dealership_id=dealership.id,
-            booking_id=booking.id,
-            notification_type=notif_type,
-            channel="email",
-            recipient=customer.email,
-            status=ledger_status,
-            error_message=error_msg,
-            sent_at=now if ledger_status == "sent" else None,
-            created_at=now,
-        )
-        try:
-            db.add(record)
-            db.commit()
-        except IntegrityError:
-            db.rollback()
-            stats["skipped_already_delivered"] += 1
-            continue
-
-        if ledger_status == "failed":
-            stats["failed"] += 1
-        elif notif_type == REMINDER_2H:
-            stats["sent_2h"] += 1
+        existing.error_message = error_msg
+        existing.last_attempt_at = now
+        if ledger_status == "sent":
+            existing.status = "sent"
+            existing.sent_at = now
+            existing.next_retry_at = None
+        elif ledger_status == "skipped_synthetic":
+            existing.status = "skipped_synthetic"
+            existing.next_retry_at = None
+        elif existing.attempts < MAX_DELIVERY_ATTEMPTS:
+            existing.status = "pending"
+            existing.next_retry_at = now + INITIAL_RETRY_DELAY * (2 ** (existing.attempts - 1))
+            stats["pending"] += 1
         else:
+            existing.status = "failed"
+            existing.next_retry_at = None
+            stats["failed"] += 1
+        db.commit()
+
+        if existing.status == "sent" and notif_type == REMINDER_2H:
+            stats["sent_2h"] += 1
+        elif existing.status == "sent":
             stats["sent_24h"] += 1
 
     return {

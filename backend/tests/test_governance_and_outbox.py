@@ -77,6 +77,33 @@ def test_outbox_enqueue_and_dispatch_with_retry_and_success(monkeypatch) -> None
     assert "HTTP 500" in failing_event.last_error
 
 
+def test_outbox_events_without_targets_are_not_retried_forever() -> None:
+    event = SimpleNamespace(
+        id=3,
+        dealership_id=1,
+        event_type="lead.created",
+        aggregate_type="customer_lead",
+        aggregate_id="17",
+        payload={},
+        target_webhook_url=None,
+        status="pending",
+        attempts=0,
+        last_error=None,
+        next_retry_at=None,
+        delivered_at=None,
+        created_at=datetime.now(timezone.utc),
+    )
+    db = MagicMock()
+    db.scalars.return_value = [event]
+
+    report = outbox_service.dispatch_pending_outbox_events(db)
+
+    assert report["skipped_no_target"] == 1
+    assert event.status == "no_target"
+    assert event.last_error == "No webhook target is configured."
+    db.commit.assert_called_once()
+
+
 def test_governance_reports_and_outbox_endpoints(monkeypatch) -> None:
     admin = SimpleNamespace(
         id=1,
@@ -100,6 +127,24 @@ def test_governance_reports_and_outbox_endpoints(monkeypatch) -> None:
         "get_dealership_report_summary",
         lambda db, did: summary_data,
     )
+    analytics_data = {
+        "start_date": "2026-03-01",
+        "end_date": "2026-03-31",
+        "leads": {
+            "total": 3,
+            "won": 1,
+            "conversion_rate": 33.3,
+            "by_status": {"new": 2, "won": 1},
+        },
+        "by_source": [],
+        "by_rep": [],
+        "test_drives": {"total": 2},
+    }
+    monkeypatch.setattr(
+        governance_ep.reporting_service,
+        "get_dealership_report_analytics",
+        lambda db, did, start, end: analytics_data,
+    )
     monkeypatch.setattr(
         governance_ep.outbox_service,
         "list_outbox_events",
@@ -119,6 +164,19 @@ def test_governance_reports_and_outbox_endpoints(monkeypatch) -> None:
             assert rep.status_code == 200
             assert rep.json()["inventory"]["total"] == 5
             assert rep.json()["leads"]["won_deal_value"] == 35000.0
+
+            analytics = client.get(
+                "/api/v1/dealerships/1/reports/analytics"
+                "?start_date=2026-03-01&end_date=2026-03-31"
+            )
+            assert analytics.status_code == 200
+            assert analytics.json()["leads"]["conversion_rate"] == 33.3
+
+            invalid_range = client.get(
+                "/api/v1/dealerships/1/reports/analytics"
+                "?start_date=2026-04-01&end_date=2026-03-31"
+            )
+            assert invalid_range.status_code == 400
 
             ob = client.get("/api/v1/dealerships/1/outbox")
             assert ob.status_code == 200

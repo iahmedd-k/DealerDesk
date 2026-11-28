@@ -7,6 +7,7 @@ from app.core.authorization import (
     ensure_dealership_admin_access,
 )
 from app.core.errors import ConflictError, NotFoundError
+from app.core.redis import redis_client
 from app.models.user import User
 from app.models.workspace import Dealership
 from app.repositories import dealership_repository, user_repository
@@ -52,7 +53,9 @@ def update_subscription(
         if value is not None:
             setattr(dealership, field, value)
 
-    return dealership_repository.save(db, dealership)
+    saved = dealership_repository.save(db, dealership)
+    redis_client.delete("dealerdesk:public:dealerships")
+    return saved
 
 
 def register_dealership(db: Session, payload: DealershipRegistrationRequest) -> User:
@@ -104,14 +107,16 @@ def update_dealership(
     dealership = get_active_dealership(db, dealership_id)
 
     for field, value in payload.model_dump(exclude_unset=True).items():
-        if value is not None:
+        if value is not None or field == "whatsapp_number":
             setattr(
                 dealership,
                 field,
                 str(value).lower() if field == "email" else value,
             )
 
-    return dealership_repository.save(db, dealership)
+    saved = dealership_repository.save(db, dealership)
+    redis_client.delete("dealerdesk:public:dealerships")
+    return saved
 
 
 def delete_dealership(db: Session, dealership_id: int, current_user: User) -> None:

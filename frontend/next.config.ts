@@ -4,6 +4,7 @@ const embedFrameAncestors =
   process.env.NEXT_PUBLIC_EMBED_FRAME_ANCESTORS || "*";
 
 const nextConfig: NextConfig = {
+  allowedDevOrigins: ["127.0.0.1", "localhost"],
   images: {
     unoptimized: true,
   },

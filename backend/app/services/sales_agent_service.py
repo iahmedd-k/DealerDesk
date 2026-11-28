@@ -274,7 +274,7 @@ def _orchestrate_sales_tools(
         if val > 1000:
             max_price = val
 
-    # 1. Search inventory
+    # 1. Search inventory (fall back to unfiltered available inventory if query words didn't match)
     matched_vehicles = sales_tools.search_inventory(
         db,
         dealership.id,
@@ -283,6 +283,15 @@ def _orchestrate_sales_tools(
         brand_id=brand_id,
         limit=5,
     )
+    if not matched_vehicles and intent in {"inventory_inquiry", "vehicle_comparison"}:
+        matched_vehicles = sales_tools.search_inventory(
+            db,
+            dealership.id,
+            query=None,
+            max_price=max_price,
+            brand_id=brand_id,
+            limit=5,
+        )
 
     # 2. Get test-drive slots if intent relates to test drive or vehicles matched
     target_vehicle_id = matched_vehicles[0]["id"] if matched_vehicles else None
@@ -292,6 +301,13 @@ def _orchestrate_sales_tools(
         vehicle_id=target_vehicle_id if intent == "test_drive_booking" else None,
         limit=5,
     )
+    if not available_slots and target_vehicle_id is not None:
+        available_slots = sales_tools.get_available_test_drive_slots(
+            db,
+            dealership.id,
+            vehicle_id=None,
+            limit=5,
+        )
 
     # 3. Public knowledge lookup via RAG
     sources = []

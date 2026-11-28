@@ -151,7 +151,7 @@ export default function KnowledgePage() {
     <Shell>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-medium tracking-tight text-[#171717]">
+          <h1 className="crm-page-title">
             Knowledge Base & Document Center
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -183,7 +183,7 @@ export default function KnowledgePage() {
         <div className="lg:col-span-2 crm-card overflow-hidden">
           <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <BookOpen className="h-4 w-4 text-blue-600" />
+              <BookOpen className="h-4 w-4 text-slate-500" />
               <h2 className="text-sm font-medium text-[#171717]">
                 Indexed Documents ({documents.length})
               </h2>

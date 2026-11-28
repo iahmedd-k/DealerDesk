@@ -19,7 +19,7 @@ from app.schemas.assistant import (
     AssistantVehicleMatch,
 )
 from app.schemas.knowledge import KnowledgeSearchRequest
-from app.services import knowledge_service, llm_service
+from app.services import dealership_agent_service, knowledge_service, llm_service
 
 
 def _ensure_user_scope(current_user: User | None, dealership_id: int) -> None:
@@ -73,6 +73,26 @@ def chat_with_assistant(
             matched_vehicles=[],
             available_slots=[],
             suggested_actions=["Browse available vehicles", "View test-drive slots", "Contact our dealership staff"],
+        )
+
+    agent_result = dealership_agent_service.run_llm_staff_agent(
+        db,
+        dealership,
+        current_user,
+        safety_check.sanitized_message,
+        conversation_history=payload.conversation_history,
+    )
+    if agent_result is not None:
+        return AssistantChatResponse(
+            response=agent_result["response"],
+            dealership_id=dealership.id,
+            dealership_name=dealership.name,
+            brand_id=payload.brand_id,
+            intent=agent_result["intent"],
+            sources=[],
+            matched_vehicles=[],
+            available_slots=[],
+            suggested_actions=agent_result.get("suggested_actions", []),
         )
 
     context_bundle = _build_context_bundle(
@@ -133,6 +153,26 @@ async def stream_chat_with_assistant(
             "matched_vehicles": [],
             "available_slots": [],
             "suggested_actions": ["Browse available vehicles", "View test-drive slots"],
+        }
+        yield f"data: {json.dumps(done_payload)}\n\n"
+        return
+
+    agent_result = dealership_agent_service.run_llm_staff_agent(
+        db,
+        dealership,
+        current_user,
+        safety_check.sanitized_message,
+        conversation_history=payload.conversation_history,
+    )
+    if agent_result is not None:
+        yield f"data: {json.dumps({'type': 'chunk', 'content': agent_result['response']})}\n\n"
+        done_payload = {
+            "type": "done",
+            "intent": agent_result["intent"],
+            "matched_vehicles": [],
+            "available_slots": [],
+            "sources": [],
+            "suggested_actions": agent_result.get("suggested_actions", []),
         }
         yield f"data: {json.dumps(done_payload)}\n\n"
         return

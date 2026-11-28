@@ -47,6 +47,7 @@ def _send_resend_email(payload: dict[str, Any]) -> str:
     headers = {
         "Authorization": f"Bearer {settings.resend_api_key.get_secret_value()}",
         "Content-Type": "application/json",
+        "User-Agent": "DealerDesk/1.0",
     }
 
     last_error: Exception | None = None

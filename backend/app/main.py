@@ -1,6 +1,5 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,8 +13,11 @@ from app.db.migrations import (
     ensure_channel_and_hold_tables,
     ensure_crm_lead_enhancements,
     ensure_governance_and_outbox_tables,
+    ensure_gmail_sync_columns,
     ensure_notification_ledger_table,
     ensure_security_and_idempotency_tables,
+    ensure_test_drive_booking_outcomes,
+    ensure_vehicle_spec_columns,
     ensure_vehicle_lifecycle_and_audit_columns,
 )
 from app.db.session import engine
@@ -24,33 +26,22 @@ from app.middleware.idempotency import IdempotencyMiddleware
 from app.middleware.logging import CorrelationIdMiddleware
 
 
-logger = logging.getLogger(__name__)
-
-
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    try:
-        Base.metadata.create_all(bind=engine)
-    except Exception as exc:
-        logger.warning("Startup table creation notice: %s", exc)
+    Base.metadata.create_all(bind=engine)
 
     for migration in (
         ensure_security_and_idempotency_tables,
         ensure_channel_and_hold_tables,
         ensure_vehicle_lifecycle_and_audit_columns,
+        ensure_vehicle_spec_columns,
         ensure_crm_lead_enhancements,
         ensure_notification_ledger_table,
+        ensure_test_drive_booking_outcomes,
         ensure_governance_and_outbox_tables,
+        ensure_gmail_sync_columns,
     ):
-        try:
-            migration(engine)
-        except Exception as exc:
-            logger.warning(
-                "Startup schema verification notice (%s): %s",
-                migration.__name__,
-                exc,
-            )
-    logger.info("DealerDesk backend server started successfully")
+        migration(engine)
     try:
         yield
     finally:

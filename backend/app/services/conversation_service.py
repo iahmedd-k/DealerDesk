@@ -2,12 +2,13 @@ from datetime import datetime, timezone
 import re
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.core.errors import NotFoundError
-from app.models.channel import Conversation, ConversationMessage
+from app.core.errors import ConflictError, NotFoundError, UnprocessableEntityError
+from app.models.channel import Conversation, ConversationMessage, TwilioDeliveryStatus
 from app.models.user import User
+from app.models.workspace import Dealership
 
 _CARD_PATTERN = re.compile(r"\b(?:\d[ -]*?){13,19}\b")
 _SSN_PATTERN = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
@@ -110,6 +111,7 @@ def append_message(
     content: str,
     sender_id: int | None = None,
     channel_metadata: dict[str, Any] | None = None,
+    external_message_id: str | None = None,
 ) -> ConversationMessage:
     """
     Appends a new message turn to the persistent conversation log,
@@ -125,6 +127,7 @@ def append_message(
         sender_type=sender_type,
         sender_id=sender_id,
         content=clean_content,
+        external_message_id=external_message_id,
         channel_metadata=meta,
         created_at=now,
     )
@@ -245,6 +248,7 @@ def update_conversation_status(
     status: str,
     staff_user: User,
     assigned_to_user_id: int | None = None,
+    assignment_provided: bool = False,
     handoff_reason: str | None = None,
 ) -> Conversation:
     conv = get_conversation_for_dealership(db, dealership_id, conversation_id)
@@ -252,16 +256,25 @@ def update_conversation_status(
     prev_status = conv.status
     conv.status = status
     meta = dict(conv.channel_metadata or {})
-    if assigned_to_user_id is not None:
-        assignee = (
-            db.query(User)
-            .filter(User.id == assigned_to_user_id, User.dealership_id == dealership_id)
-            .first()
-        )
-        if assignee is None:
-            raise NotFoundError("Staff member not found")
-        meta["assigned_to_user_id"] = assignee.id
-        meta["assigned_to_name"] = assignee.name
+    if assignment_provided:
+        if assigned_to_user_id is None:
+            meta.pop("assigned_to_user_id", None)
+            meta.pop("assigned_to_name", None)
+        else:
+            assignee = (
+                db.query(User)
+                .filter(
+                    User.id == assigned_to_user_id,
+                    User.dealership_id == dealership_id,
+                    User.role.in_({"dealership_admin", "manager", "sales_rep"}),
+                    User.is_active.is_(True),
+                )
+                .first()
+            )
+            if assignee is None:
+                raise NotFoundError("Active dealership staff member not found")
+            meta["assigned_to_user_id"] = assignee.id
+            meta["assigned_to_name"] = assignee.name
     if handoff_reason is not None:
         meta["handoff_reason"] = handoff_reason.strip()
     meta["updated_by_user_id"] = staff_user.id
@@ -293,13 +306,72 @@ def add_staff_reply(
     content: str,
 ) -> ConversationMessage:
     conv = get_conversation_for_dealership(db, dealership_id, conversation_id)
+    metadata: dict[str, Any] = {
+        "staff_name": staff_user.name,
+        "staff_email": staff_user.email,
+    }
+    external_message_id = None
+    if conv.channel == "email":
+        from app.services import gmail_service
+
+        provider_message = gmail_service.send_reply(
+            db,
+            conv,
+            staff_user,
+            content.strip(),
+        )
+        external_message_id = provider_message["provider_message_id"]
+        metadata.update(
+            {
+                "provider": "gmail",
+                "rfc822_message_id": provider_message["rfc822_message_id"],
+                "references": provider_message.get("references", ""),
+                "provider_status": "sent",
+            }
+        )
+    elif conv.channel == "whatsapp":
+        from app.channels.whatsapp.service import get_whatsapp_service
+        from app.core.config import get_settings
+
+        dealership = db.get(Dealership, dealership_id)
+        if dealership is None or not dealership.is_active:
+            raise NotFoundError("Dealership not found")
+        if not dealership.whatsapp_number:
+            raise ConflictError("Configure a WhatsApp number in Settings before replying.")
+        provider_message = get_whatsapp_service().send_message(
+            to=conv.channel_user_id,
+            body=content.strip(),
+            from_override=f"whatsapp:{dealership.whatsapp_number}",
+            status_callback=get_settings().twilio_status_callback_url,
+        )
+        external_message_id = provider_message["sid"]
+        latest_status = db.scalar(
+            select(TwilioDeliveryStatus).where(
+                TwilioDeliveryStatus.message_sid == provider_message["sid"]
+            )
+        )
+        metadata.update(
+            {
+                "provider": "twilio",
+                "provider_status": (
+                    latest_status.status
+                    if latest_status is not None
+                    else provider_message.get("status", "queued")
+                ),
+            }
+        )
+    else:
+        raise UnprocessableEntityError(
+            "Replies are not supported for this channel yet; use the original channel to contact the customer."
+        )
     return append_message(
         db,
         conv.id,
         sender_type="staff",
         content=content.strip(),
         sender_id=staff_user.id,
-        channel_metadata={"staff_name": staff_user.name, "staff_email": staff_user.email},
+        channel_metadata=metadata,
+        external_message_id=external_message_id,
     )
 
 

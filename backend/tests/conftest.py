@@ -33,6 +33,8 @@ from app.db.migrations import (  # noqa: E402
     ensure_governance_and_outbox_tables,
     ensure_notification_ledger_table,
     ensure_security_and_idempotency_tables,
+    ensure_test_drive_booking_outcomes,
+    ensure_vehicle_spec_columns,
     ensure_vehicle_lifecycle_and_audit_columns,
 )
 from app.db.session import SessionLocal, engine  # noqa: E402
@@ -70,8 +72,10 @@ def reset_database(request: pytest.FixtureRequest) -> Iterator[None]:
     Base.metadata.create_all(bind=engine)
     ensure_security_and_idempotency_tables(engine)
     ensure_vehicle_lifecycle_and_audit_columns(engine)
+    ensure_vehicle_spec_columns(engine)
     ensure_crm_lead_enhancements(engine)
     ensure_notification_ledger_table(engine)
+    ensure_test_drive_booking_outcomes(engine)
     ensure_governance_and_outbox_tables(engine)
     yield
     _reset_test_schema()

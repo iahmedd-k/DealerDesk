@@ -163,7 +163,7 @@ export default function OperationsPage() {
     <Shell>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-medium tracking-tight text-[#171717]">
+          <h1 className="crm-page-title">
             Operations & Outbox
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -249,7 +249,8 @@ export default function OperationsPage() {
                   {summary.observability.outbox_by_status?.pending ?? 0}
                 </p>
                 <p className="text-xs text-slate-500 mt-1">
-                  pending events · {summary.observability.notifications_by_status?.sent ?? 0} sent
+                  pending · {summary.observability.outbox_by_status?.no_target ?? 0} without target ·{" "}
+                  {summary.observability.notifications_by_status?.sent ?? 0} notifications sent
                 </p>
               </div>
             </div>
@@ -259,7 +260,7 @@ export default function OperationsPage() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 crm-card p-6">
               <div className="flex items-center gap-2 mb-4">
-                <Sliders className="h-4 w-4 text-blue-600" />
+                <Sliders className="h-4 w-4 text-slate-500" />
                 <h2 className="text-base font-medium text-[#171717]">
                   Test-Drive Scheduling Policy
                 </h2>
@@ -387,7 +388,7 @@ export default function OperationsPage() {
             <div className="crm-card p-6 flex flex-col justify-between">
               <div>
                 <div className="flex items-center gap-2 mb-3">
-                  <CalendarClock className="h-4 w-4 text-blue-600" />
+                  <CalendarClock className="h-4 w-4 text-slate-500" />
                   <h2 className="text-base font-medium text-[#171717]">Slot Generator</h2>
                 </div>
                 <p className="text-xs text-slate-500 mb-4">
@@ -423,7 +424,7 @@ export default function OperationsPage() {
             <div className="crm-card overflow-hidden">
               <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <Activity className="h-4 w-4 text-blue-600" />
+                  <Activity className="h-4 w-4 text-slate-500" />
                   <h2 className="text-sm font-medium text-[#171717]">
                     Webhook Outbox ({outbox.length})
                   </h2>
@@ -476,7 +477,7 @@ export default function OperationsPage() {
             <div className="crm-card overflow-hidden">
               <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <Bell className="h-4 w-4 text-blue-600" />
+                  <Bell className="h-4 w-4 text-slate-500" />
                   <h2 className="text-sm font-medium text-[#171717]">
                     Notification Deliveries ({notifications.length})
                   </h2>
@@ -533,7 +534,7 @@ export default function OperationsPage() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
                 <div>
                   <div className="flex items-center gap-2">
-                    <Code2 className="h-4 w-4 text-blue-600" />
+                    <Code2 className="h-4 w-4 text-slate-500" />
                     <h2 className="text-base font-medium text-[#171717]">
                       Website AI Widget Embed
                     </h2>

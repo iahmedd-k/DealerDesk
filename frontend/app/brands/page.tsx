@@ -147,7 +147,7 @@ export default function BrandsPage() {
     <Shell>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-medium tracking-tight text-[#171717]">
+          <h1 className="crm-page-title">
             Multi-Brand Portfolio
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">

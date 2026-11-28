@@ -73,19 +73,24 @@ Roles are stored on the `users` table and enforced on every protected route. See
 - Pytest integration suite against a dedicated PostgreSQL schema.
 - Demo seeding for local and integration testing.
 
+### AI Agents & RAG Knowledge Base
+- **Public Customer Sales Agent (`/api/v1/dealerships/{id}/sales-agent/...`):** Grounded showroom chat, inventory search, slot availability, OTP-verified test-drive booking, and lead capture.
+- **Internal Dealership Operations Assistant (`/api/v1/dealerships/{id}/assistant/chat` & `/chat/stream`):** Combines RAG knowledge retrieval with staff-only action execution (`dealership_agent_service.py`) for adding/updating vehicles (including `.csv`/`.json`/`.txt` uploads), creating/generating/updating test-drive slots, marking booking outcomes (`completed` / `no_show`), and updating/auto-assigning leads.
+
 ## Current status
 
 | Area | Status |
 | --- | --- |
 | Backend API | Implemented |
+| Next.js 15 Frontend CRM & Public Showroom | Implemented (`/dashboard`, `/leads`, `/inbox`, `/inventory`, `/bookings`, `/assistant`, `/operations`, etc.) |
 | Database models and startup migration | Implemented |
-| Authentication and authorization | Implemented |
+| Authentication and authorization | Implemented (Cookie JWT + RBAC + `dealerdesk_admin`) |
 | Test suite | Implemented (integration + unit) |
-| Email delivery | Implemented, optional (requires Resend key) |
-| Brand logo storage | Implemented, optional (requires Supabase config) |
-| Alembic migration history | Not used; schema is created at startup (see [Deployment](deployment.md)) |
-| Frontend | Not implemented (`frontend/` only contains `node_modules`) |
-| CORS, rate limiting, pagination | Not implemented (see [Roadmap](roadmap.md)) |
+| Upstash Redis caching & OTP store | Implemented, optional (`UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`) |
+| Email delivery | Implemented, optional (requires `RESEND_API_KEY`) |
+| Brand logo & vehicle image storage | Implemented, optional (requires Supabase Storage config) |
+| CORS & rate limiting | Implemented (`CORS_ORIGINS`, `slowapi` limiter) |
+| Alembic migration history | Not used; schema is created/verified at startup (see [Deployment](deployment.md)) |
 
 ## Related documents
 

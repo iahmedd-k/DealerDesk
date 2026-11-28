@@ -7,6 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.redis import redis_client
 from app.db.session import engine
 from app.repositories.health_repository import check_database
 
@@ -62,6 +63,11 @@ def get_health_report(db: Session) -> tuple[dict[str, Any], bool]:
                     "remote"
                     if settings.llm_api_url and settings.llm_api_key
                     else "local_deterministic"
+                ),
+                "redis": (
+                    "connected"
+                    if redis_client.is_configured and redis_client.ping()
+                    else ("unavailable" if redis_client.is_configured else "unconfigured")
                 ),
             },
         },

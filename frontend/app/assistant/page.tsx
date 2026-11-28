@@ -9,6 +9,7 @@ import {
   AlertCircle,
   X,
   UserPlus,
+  Paperclip,
 } from "lucide-react";
 import Shell from "../components/Shell";
 import { useAuth } from "../providers";
@@ -27,11 +28,13 @@ interface Message {
 }
 
 const PRESETS = [
+  "What can you do?",
+  "Give me a dashboard summary",
+  "Show handoff queue",
   "What vehicles are available?",
-  "What test-drive slots are open this week?",
-  "What are our business hours and address?",
-  "Summarize the indexed warranty and coverage documents.",
-  "Which vehicles are priced under $50,000?",
+  "Add vehicle 2026 Toyota Camry XSE, price $38500, stock #CAM-2026, test drive enabled",
+  "Generate test-drive slots for the next 7 days",
+  "Dispatch outbox events",
 ];
 
 export default function AssistantPage() {
@@ -52,6 +55,20 @@ export default function AssistantPage() {
   const [leadSubmitted, setLeadSubmitted] = useState(false);
   const [submittingLead, setSubmittingLead] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function handleFileUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      const content = await file.text();
+      if (!content.trim()) return;
+      await handleSend(`[Uploaded file: ${file.name}]\n${content.trim()}`);
+    } catch {
+      setChatError("Could not read the uploaded file.");
+    }
+  }
 
   useEffect(() => {
     if (!authReady || !user || !activeDealershipId) return;
@@ -246,7 +263,7 @@ export default function AssistantPage() {
     <Shell>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-medium tracking-tight text-[#171717]">
+          <h1 className="crm-page-title">
             {dealershipName ? `${dealershipName} Assistant` : "Dealership AI Copilot"}
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -324,8 +341,14 @@ export default function AssistantPage() {
                       </span>
                       <span>· {msg.timestamp}</span>
                       {msg.intent && (
-                        <span className="rounded bg-white/80 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700">
-                          {msg.intent}
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${
+                            msg.intent === "agent_action"
+                              ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                              : "bg-white/80 text-slate-700"
+                          }`}
+                        >
+                          {msg.intent === "agent_action" ? "Action Executed" : msg.intent}
                         </span>
                       )}
                     </div>
@@ -364,10 +387,26 @@ export default function AssistantPage() {
             className="border-t border-slate-200 bg-slate-50 p-3 flex items-center gap-2"
           >
             <input
+              ref={fileInputRef}
+              type="file"
+              accept=".txt,.csv,.json"
+              onChange={(e) => void handleFileUpload(e)}
+              className="hidden"
+            />
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => fileInputRef.current?.click()}
+              className="crm-btn-secondary shrink-0 px-3"
+              title="Upload vehicle CSV, JSON, or text details"
+            >
+              <Paperclip className="h-4 w-4" />
+            </button>
+            <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask about available vehicles, pricing, warranty docs, or open slots..."
+              placeholder="Ask a question, upload vehicle CSV/JSON, or command an action (add vehicle, create/update slot)..."
               className="crm-input bg-white"
               disabled={loading}
             />

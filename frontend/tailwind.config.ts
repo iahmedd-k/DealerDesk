@@ -9,9 +9,7 @@ const config: Config = {
     extend: {
       fontFamily: {
         sans: [
-          "var(--font-inter)",
           "var(--font-geist)",
-          "Inter",
           "-apple-system",
           "BlinkMacSystemFont",
           "Segoe UI",

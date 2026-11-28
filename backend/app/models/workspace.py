@@ -61,11 +61,20 @@ class KnowledgeChunk(Base):
 
 class Dealership(Base):
     __tablename__ = "dealerships"
+    __table_args__ = (
+        Index(
+            "uq_dealerships_whatsapp_number",
+            "whatsapp_number",
+            unique=True,
+            postgresql_where=text("whatsapp_number IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(150))
     email: Mapped[str] = mapped_column(String(320))
     phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    whatsapp_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
     address: Mapped[str | None] = mapped_column(String(255), nullable=True)
     timezone: Mapped[str] = mapped_column(String(64), default="UTC")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -127,6 +136,7 @@ class Vehicle(Base):
         UniqueConstraint(
             "dealership_id", "stock_number", name="uq_vehicle_dealership_stock"
         ),
+        UniqueConstraint("dealership_id", "vin", name="uq_vehicle_dealership_vin"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
@@ -143,7 +153,26 @@ class Vehicle(Base):
     variant: Mapped[str | None] = mapped_column(String(120), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    acquisition_cost: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 2), nullable=True
+    )
+    location: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    reconditioning_status: Mapped[str] = mapped_column(
+        String(24), default="not_required"
+    )
+    acquired_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+    )
     stock_number: Mapped[str] = mapped_column(String(64))
+    vin: Mapped[str | None] = mapped_column(String(17), nullable=True)
+    mileage: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    transmission: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    fuel_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    drivetrain: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    exterior_color: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    interior_color: Mapped[str | None] = mapped_column(String(64), nullable=True)
     is_available: Mapped[bool] = mapped_column(Boolean, default=True)
     status: Mapped[str] = mapped_column(String(32), default="available", index=True)
     test_drive_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -159,6 +188,13 @@ class Vehicle(Base):
         lazy="selectin",
         cascade="all, delete-orphan",
     )
+
+    @property
+    def days_in_stock(self) -> int:
+        acquired_at = self.acquired_at
+        if acquired_at.tzinfo is None:
+            acquired_at = acquired_at.replace(tzinfo=timezone.utc)
+        return max(0, (datetime.now(timezone.utc) - acquired_at.astimezone(timezone.utc)).days)
 
 
 class VehicleImage(Base):
@@ -269,6 +305,13 @@ class TestDriveBooking(Base):
     vehicle_id: Mapped[int] = mapped_column(ForeignKey("vehicles.id"), index=True)
     customer_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     status: Mapped[str] = mapped_column(String(16), default="booked")
+    assigned_to_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    outcome_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    outcome_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     cancelled_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -363,6 +406,28 @@ class CustomerLead(Base):
     consented_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    email_consent: Mapped[bool] = mapped_column(Boolean, default=False)
+    email_consented_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    email_opted_out_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    sms_consent: Mapped[bool] = mapped_column(Boolean, default=False)
+    sms_consented_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    sms_opted_out_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    whatsapp_consent: Mapped[bool] = mapped_column(Boolean, default=False)
+    whatsapp_consented_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    whatsapp_opted_out_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    lost_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
     next_follow_up_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
@@ -374,6 +439,11 @@ class CustomerLead(Base):
     preferences: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     deal_value: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     deal_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trade_in_vehicle: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    trade_in_value: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    down_payment: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    apr_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    loan_term_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -435,6 +505,13 @@ class NotificationDelivery(Base):
     recipient: Mapped[str] = mapped_column(String(320))
     status: Mapped[str] = mapped_column(String(32), index=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    last_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

@@ -21,6 +21,7 @@ type AuthContextValue = {
   activeDealershipId: number;
   setActiveDealershipId: (id: number) => void;
   setSession: (accessToken: string, refreshToken: string, user: User) => void;
+  updateUser: (user: User) => void;
   logout: () => Promise<void>;
 };
 
@@ -141,6 +142,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setAuthReady(true);
   }
 
+  function updateUser(nextUser: User) {
+    localStorage.setItem("dealerdesk_user", JSON.stringify(nextUser));
+    setUser(nextUser);
+  }
+
   function handleSetActiveDealershipId(id: number) {
     if (!Number.isInteger(id) || id < 1) {
       throw new Error("A valid dealership must be selected.");
@@ -174,6 +180,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         activeDealershipId,
         setActiveDealershipId: handleSetActiveDealershipId,
         setSession,
+        updateUser,
         logout,
       }}
     >

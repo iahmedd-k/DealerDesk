@@ -115,6 +115,24 @@ def get_slot_for_vehicle_start(
     )
 
 
+def get_overlapping_slot(
+    db: Session,
+    dealership_id: int,
+    vehicle_id: int,
+    starts_at: datetime,
+    ends_at: datetime,
+) -> TestDriveSlot | None:
+    return db.scalar(
+        select(TestDriveSlot).where(
+            TestDriveSlot.dealership_id == dealership_id,
+            TestDriveSlot.vehicle_id == vehicle_id,
+            TestDriveSlot.is_active.is_(True),
+            TestDriveSlot.starts_at < ends_at,
+            TestDriveSlot.ends_at > starts_at,
+        )
+    )
+
+
 def list_future_slots_for_update(
     db: Session,
     dealership_id: int,

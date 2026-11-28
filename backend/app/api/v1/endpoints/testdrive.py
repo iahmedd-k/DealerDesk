@@ -14,6 +14,7 @@ from app.models.workspace import (
     TestDriveSlot,
 )
 from app.schemas.workspace import (
+    TestDriveBookingOutcomeRequest,
     TestDriveBookingRequest,
     TestDriveBookingResponse,
     TestDriveCancellationRequest,
@@ -233,6 +234,26 @@ def get_booking(
     )
 
 
+@router.patch(
+    "/test-drive-bookings/{booking_id}",
+    response_model=TestDriveBookingResponse,
+)
+def update_test_drive_booking(
+    dealership_id: int,
+    booking_id: int,
+    payload: TestDriveBookingOutcomeRequest,
+    current_user: User = Depends(require_dealership_roles(*STAFF_ROLES)),
+    db: Session = Depends(get_db),
+) -> TestDriveBooking:
+    return test_drive_service.update_booking_outcome(
+        db,
+        dealership_id,
+        booking_id,
+        current_user,
+        payload,
+    )
+
+
 @router.post(
     "/test-drive-slots/{slot_id}/bookings",
     response_model=TestDriveBookingResponse,
@@ -241,7 +262,7 @@ def get_booking(
 def book_test_drive(
     dealership_id: int,
     slot_id: int,
-    payload: TestDriveBookingRequest | None = None,
+    payload: TestDriveBookingRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TestDriveBooking:

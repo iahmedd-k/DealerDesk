@@ -33,9 +33,16 @@ Refresh tokens have a fixed 30-day lifetime in code.
 | `DATABASE_POOL_SIZE` | `5` | Persistent pool connections (≥ 1). |
 | `DATABASE_MAX_OVERFLOW` | `10` | Extra connections beyond pool size (≥ 0). |
 | `DATABASE_POOL_TIMEOUT` | `30` | Seconds to wait for a connection (≥ 1). |
-| `DATABASE_POOL_RECYCLE` | `1800` | Seconds before a connection is recycled (≥ -1). |
-| `DATABASE_POOL_PRE_PING` | `true` | Validate connections before use. |
+| `DATABASE_POOL_RECYCLE` | `1800` | Seconds before a connection is recycled (≥ -1). Recommended `300` for remote pooled PostgreSQL. |
+| `DATABASE_POOL_PRE_PING` | `false` | Validate connections before use (`false` avoids extra `SELECT 1` RTT on remote poolers like Supabase). |
 | `DATABASE_SCHEMA` | unset | Optional PostgreSQL schema; sets the connection `search_path`. Used by tests for `dealerdesk_test`. |
+
+### Upstash Redis (optional caching & OTP storage)
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `UPSTASH_REDIS_REST_URL` | unset | Upstash Redis REST API endpoint URL. |
+| `UPSTASH_REDIS_REST_TOKEN` | unset | Upstash Redis REST bearer token. Used for read caching (`/vehicles`, `/brands`, `/reports/summary`, `/dealerships/public`) and OTP/rate-limit windows. |
 
 ### CORS and browser origins
 

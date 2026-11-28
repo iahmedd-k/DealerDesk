@@ -37,6 +37,7 @@ class ConversationSummaryOut(BaseModel):
     dealership_id: int
     channel: str
     channel_user_id: str
+    email_subject: str | None = None
     customer_id: int | None = None
     status: str
     assigned_to_user_id: int | None = None
@@ -75,6 +76,7 @@ def _to_summary(conv: Conversation) -> ConversationSummaryOut:
         dealership_id=conv.dealership_id,
         channel=conv.channel,
         channel_user_id=conv.channel_user_id,
+        email_subject=meta.get("email_subject"),
         customer_id=conv.customer_id,
         status=conv.status,
         assigned_to_user_id=meta.get("assigned_to_user_id"),
@@ -91,7 +93,7 @@ def _to_summary(conv: Conversation) -> ConversationSummaryOut:
 def list_conversations(
     dealership_id: int,
     response: Response,
-    channel: Literal["website", "whatsapp", "voice"] | None = Query(default=None),
+    channel: Literal["website", "whatsapp", "voice", "email"] | None = Query(default=None),
     conv_status: Literal["active", "handed_off", "closed"] | None = Query(
         default=None, alias="status"
     ),
@@ -159,6 +161,7 @@ def update_conversation_status(
         status=payload.status,
         staff_user=current_user,
         assigned_to_user_id=payload.assigned_to_user_id,
+        assignment_provided="assigned_to_user_id" in payload.model_fields_set,
         handoff_reason=payload.handoff_reason,
     )
     audit_service.log_event(

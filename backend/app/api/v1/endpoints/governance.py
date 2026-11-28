@@ -1,10 +1,12 @@
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
+from app.core.redis import redis_client
+from app.core.errors import BadRequestError
 from app.core.roles import DEALERSHIP_ADMIN_ROLE, MANAGER_ROLE
 from app.db.session import get_db
 from app.dependencies.workspace import require_dealership_roles
@@ -44,7 +46,36 @@ def get_dealership_report_summary(
     ),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    return reporting_service.get_dealership_report_summary(db, dealership_id)
+    cache_key = f"dealerdesk:reports:summary:{dealership_id}"
+    cached = redis_client.get_json(cache_key)
+    if isinstance(cached, dict):
+        return cached
+    summary = reporting_service.get_dealership_report_summary(db, dealership_id)
+    redis_client.set_json(cache_key, summary, ttl_seconds=20)
+    return summary
+
+
+@router.get("/reports/analytics")
+def get_dealership_report_analytics(
+    dealership_id: int,
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    current_user: User = Depends(
+        require_dealership_roles(DEALERSHIP_ADMIN_ROLE, MANAGER_ROLE)
+    ),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    today = datetime.now(timezone.utc).date()
+    resolved_end = end_date or today
+    resolved_start = start_date or (resolved_end - timedelta(days=29))
+    if resolved_start > resolved_end:
+        raise BadRequestError("start_date must be on or before end_date")
+    return reporting_service.get_dealership_report_analytics(
+        db,
+        dealership_id,
+        resolved_start,
+        resolved_end,
+    )
 
 
 @router.get("/outbox", response_model=list[OutboxEventOut])

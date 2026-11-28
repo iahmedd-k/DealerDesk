@@ -52,7 +52,15 @@ def test_process_due_reminders_dispatches_24h_and_2h_idempotently(monkeypatch) -
         (booking_2h, slot_2h, dealership, vehicle, customer),
     ]
     # First booking not yet delivered, second booking already delivered
-    db.scalar.side_effect = [None, SimpleNamespace(id=999)]
+    db.scalar.side_effect = [
+        None,
+        SimpleNamespace(
+            id=999,
+            status="sent",
+            attempts=1,
+            next_retry_at=None,
+        ),
+    ]
 
     report = reminder_service.process_due_booking_reminders(db, dry_run=False)
 
@@ -67,6 +75,57 @@ def test_process_due_reminders_dispatches_24h_and_2h_idempotently(monkeypatch) -
     assert ledger_row.booking_id == 101
     assert ledger_row.notification_type == reminder_service.REMINDER_24H
     assert ledger_row.status == "sent"
+
+
+def test_pending_reminder_is_retried_and_not_counted_as_sent(monkeypatch) -> None:
+    now = datetime.now(timezone.utc)
+    dealership = SimpleNamespace(
+        id=1,
+        name="Apex Motors",
+        address="100 Auto Way",
+        phone="555-1234",
+        timezone="UTC",
+        is_active=True,
+    )
+    vehicle = SimpleNamespace(
+        id=10,
+        make="Toyota",
+        model="Camry",
+        model_year=2025,
+        stock_number="STK-10",
+    )
+    customer = SimpleNamespace(id=5, name="Jane", email="jane@example.com")
+    booking = SimpleNamespace(id=101, status="booked")
+    slot = SimpleNamespace(
+        starts_at=now + timedelta(hours=12),
+        ends_at=now + timedelta(hours=12, minutes=30),
+    )
+    delivery = SimpleNamespace(
+        dealership_id=1,
+        booking_id=101,
+        notification_type=reminder_service.REMINDER_24H,
+        channel="email",
+        recipient=customer.email,
+        status="pending",
+        attempts=1,
+        next_retry_at=now - timedelta(minutes=1),
+        last_attempt_at=now - timedelta(minutes=10),
+        error_message="Email provider is not configured",
+        sent_at=None,
+    )
+    db = MagicMock()
+    db.execute.return_value.all.return_value = [(booking, slot, dealership, vehicle, customer)]
+    db.scalar.return_value = delivery
+    monkeypatch.setattr(email_service, "send_test_drive_reminder", lambda **_: "email_sent")
+
+    report = reminder_service.process_due_booking_reminders(db)
+
+    assert report["retried"] == 1
+    assert report["sent_24h"] == 1
+    assert report["pending"] == 0
+    assert delivery.status == "sent"
+    assert delivery.attempts == 2
+    assert delivery.next_retry_at is None
 
 
 def test_process_due_reminders_dry_run_does_not_send_or_commit(monkeypatch) -> None:

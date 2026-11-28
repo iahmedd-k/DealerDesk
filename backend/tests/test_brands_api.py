@@ -129,6 +129,7 @@ def test_brand_lifecycle_blocks_inventory_and_preserves_history(
     booking = client.post(
         f"/api/v1/dealerships/{dealership_id}/test-drive-slots/{slot_id}/bookings",
         headers=customer_headers,
+        json={"confirmed": True},
     )
     assert booking.status_code == 201
 
@@ -168,6 +169,7 @@ def test_brand_lifecycle_blocks_inventory_and_preserves_history(
     blocked_booking = client.post(
         f"/api/v1/dealerships/{dealership_id}/test-drive-slots/{slot_id}/bookings",
         headers=customer_headers,
+        json={"confirmed": True},
     )
     assert blocked_booking.status_code == 409
     assert (

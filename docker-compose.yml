@@ -41,12 +41,41 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
     environment:
       DATABASE_URL: postgresql+psycopg://dealerdesk:dealerdesk_secret@postgres:5432/dealerdesk
       JWT_SECRET_KEY: test-only-jwt-secret-that-is-at-least-32-bytes
       CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
     ports:
       - "8000:8000"
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dealerdesk-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      backend:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://dealerdesk:dealerdesk_secret@postgres:5432/dealerdesk
+      JWT_SECRET_KEY: test-only-jwt-secret-that-is-at-least-32-bytes
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+    command: ["python", "-m", "app.worker"]
 
 volumes:
   postgres_data:

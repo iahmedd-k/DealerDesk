@@ -5,6 +5,7 @@ import secrets
 from typing import Any
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.core.roles import CUSTOMER_ROLE
 from app.models.channel import TestDriveSlotHold
@@ -119,7 +120,7 @@ def initiate_booking_verification(
     )
 
     # 3. Request OTP code (enforcing 60s cooldown and 3 attempts)
-    raw_code, expires_at = otp_service.request_otp(
+    raw_code, expires_at, delivery_status = otp_service.request_otp(
         db,
         dealership_id=dealership_id,
         channel=payload.channel,
@@ -127,13 +128,20 @@ def initiate_booking_verification(
         purpose="test_drive_booking",
     )
 
+    if ("@" in clean_dest or payload.channel == "email") and delivery_status not in {"email_sent"}:
+        db.delete(hold)
+        db.commit()
+        raise BadRequestError(
+            "Unable to send verification code to that email address right now. Please check email delivery configuration."
+        )
+
     # 4. If conversation_id is provided, log system message
     if payload.conversation_id:
         conversation_service.append_message(
             db,
             conversation_id=payload.conversation_id,
             sender_type="system",
-            content=f"Verification OTP dispatched to {clean_dest} via {payload.channel}. Slot hold reserved.",
+            content=f"Verification OTP ({delivery_status}) for {clean_dest} via {payload.channel}. Slot hold reserved.",
             channel_metadata={"hold_token": hold.hold_token, "slot_id": payload.slot_id},
         )
 
@@ -152,6 +160,7 @@ def initiate_booking_verification(
         channel=payload.channel,
         expires_at=expires_at.isoformat(),
         message=message,
+        delivery_status=delivery_status,
     )
 
 

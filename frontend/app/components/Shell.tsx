@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import {
   Activity,
   BookOpen,
+  Bell,
   Building2,
   Calendar,
   Car,
@@ -14,14 +15,18 @@ import {
   LogOut,
   Menu,
   MessageSquare,
+  Settings,
   ShieldAlert,
   Bot,
+  UserRound,
   Users,
+  Wrench,
   X,
 } from "lucide-react";
 import { ApiError, api } from "../api";
 import { useAuth } from "../providers";
-import type { Dealership } from "../lib/types";
+import type { Dealership, InAppNotification } from "../lib/types";
+import DealerDeskLogo from "./DealerDeskLogo";
 
 const dealershipNameCache = new Map<number, string>();
 
@@ -31,17 +36,20 @@ interface ShellProps {
 
 const ROUTE_TITLES: Record<string, string> = {
   "/dashboard": "Dashboard",
-  "/inventory": "Vehicle Inventory",
-  "/bookings": "Test Drives & Schedule",
-  "/leads": "Customer Leads",
-  "/inbox": "Conversation Inbox",
-  "/brands": "Brand Portfolio",
-  "/operations": "Operations & Outbox",
-  "/assistant": "AI Sales Copilot",
-  "/knowledge": "Knowledge Base (RAG)",
-  "/staff": "Team & Staff",
-  "/audit": "Audit Logs",
-  "/dealerships": "SaaS Control Tower",
+  "/inventory": "Inventory",
+  "/bookings": "Test drives",
+  "/service": "Service & warranty",
+  "/leads": "Leads",
+  "/inbox": "Inbox",
+  "/brands": "Brands",
+  "/operations": "Operations",
+  "/assistant": "Sales assistant",
+  "/knowledge": "Knowledge base",
+  "/staff": "Team",
+  "/audit": "Audit log",
+  "/dealerships": "Dealerships",
+  "/profile": "Profile",
+  "/settings": "Settings",
 };
 
 export default function Shell({ children }: ShellProps) {
@@ -58,10 +66,19 @@ export default function Shell({ children }: ShellProps) {
   const [publicDealerships, setPublicDealerships] = useState<Dealership[]>([]);
   const [isAvailable, setIsAvailable] = useState<boolean>(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [notifications, setNotifications] = useState<InAppNotification[]>([]);
+  const [notificationsError, setNotificationsError] = useState(false);
+  const [notificationPanelOpen, setNotificationPanelOpen] = useState(false);
 
   useEffect(() => {
     setMobileMenuOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    if (user && typeof user.is_available === "boolean") {
+      setIsAvailable(user.is_available);
+    }
+  }, [user]);
 
   useEffect(() => {
     if (!authReady || !user || user.role !== "customer") return;
@@ -112,6 +129,45 @@ export default function Shell({ children }: ShellProps) {
   }, [activeDealershipId, authReady, user]);
 
   useEffect(() => {
+    if (
+      !authReady ||
+      !user ||
+      user.role === "customer" ||
+      user.role === "dealerdesk_admin" ||
+      !activeDealershipId
+    ) {
+      setNotifications([]);
+      return;
+    }
+
+    let cancelled = false;
+    const loadNotifications = async () => {
+      try {
+        const items = await api<InAppNotification[]>(
+          `/dealerships/${activeDealershipId}/notifications/center`,
+        );
+        if (!cancelled) {
+          setNotifications(items);
+          setNotificationsError(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setNotificationsError(true);
+        }
+      }
+    };
+
+    void loadNotifications();
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") void loadNotifications();
+    }, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [activeDealershipId, authReady, user]);
+
+  useEffect(() => {
     if (authReady && !user) router.replace("/login");
   }, [authReady, router, user]);
 
@@ -145,87 +201,81 @@ export default function Shell({ children }: ShellProps) {
   const isManagerOrAdmin =
     user.role === "dealership_admin" || user.role === "manager";
 
-  const navSections =
+  const roleNavSections =
     user.role === "customer"
       ? [
           {
-            title: "Customer Portal",
+            title: "Your dealership",
             links: [
               { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
-              { href: "/inventory", label: "Browse Vehicles", icon: Car },
-              { href: "/bookings", label: "My Test Drives", icon: Calendar },
-              { href: "/assistant", label: "AI Assistant", icon: Bot },
+              { href: "/inventory", label: "Inventory", icon: Car },
+              { href: "/bookings", label: "My test drives", icon: Calendar },
+              { href: "/assistant", label: "Showroom assistant", icon: Bot },
             ],
           },
         ]
       : user.role === "dealerdesk_admin"
       ? [
           {
-            title: "Platform Governance",
+            title: "Platform",
             links: [
-              { href: "/dealerships", label: "SaaS Control Tower", icon: Building2 },
-              { href: "/audit", label: "Platform Audit Trail", icon: ShieldAlert },
-              { href: "/assistant", label: "AI Copilot Workspace", icon: Bot },
+              { href: "/dealerships", label: "Dealerships", icon: Building2 },
+              { href: "/audit", label: "Audit log", icon: ShieldAlert },
+              { href: "/assistant", label: "Assistant", icon: Bot },
             ],
           },
         ]
       : [
           {
-            title: "Sales & CRM",
+            title: "Sales",
             links: [
               { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-              { href: "/leads", label: "Customer Leads", icon: Users },
-              { href: "/inbox", label: "Conversation Inbox", icon: MessageSquare },
+              { href: "/leads", label: "Leads", icon: Users },
+              { href: "/inbox", label: "Inbox", icon: MessageSquare },
               { href: "/bookings", label: "Test Drives", icon: Calendar },
-              { href: "/inventory", label: "Vehicle Inventory", icon: Car },
+              { href: "/service", label: "Service & warranty", icon: Wrench },
+              { href: "/inventory", label: "Inventory", icon: Car },
               ...(isManagerOrAdmin
                 ? [{ href: "/brands", label: "Brands", icon: Layers }]
                 : []),
             ],
           },
           {
-            title: "AI & Knowledge",
+            title: "Resources",
             links: [
-              { href: "/assistant", label: "AI Copilot", icon: Bot },
+              { href: "/assistant", label: "Sales assistant", icon: Bot },
               { href: "/knowledge", label: "Knowledge Base", icon: BookOpen },
             ],
           },
           ...(isManagerOrAdmin
             ? [
                 {
-                  title: "Operations & Governance",
+                  title: "Administration",
                   links: [
-                    { href: "/operations", label: "Operations & Outbox", icon: Activity },
-                    { href: "/staff", label: "Team & Staff", icon: Users },
-                    { href: "/audit", label: "Audit Logs", icon: ShieldAlert },
+                    { href: "/operations", label: "Operations", icon: Activity },
+                    { href: "/staff", label: "Team", icon: Users },
+                    { href: "/audit", label: "Audit log", icon: ShieldAlert },
                   ],
                 },
               ]
             : []),
         ];
+  const navSections = roleNavSections;
 
   const pageTitle = ROUTE_TITLES[pathname] ?? "Workspace";
 
   const sidebarContent = (
-    <div className="flex h-full flex-col bg-[#0f0f10] text-[#ededed]">
+    <div className="crm-sidebar flex h-full flex-col justify-between overflow-hidden">
       {/* Brand Header */}
-      <div className="px-4 py-3.5 border-b border-white/[0.08]">
+      <div className="border-b border-slate-200/80 px-3.5 py-2.5 shrink-0">
         <div className="flex items-center justify-between">
-          <Link href="/dashboard" className="flex items-center gap-2.5">
-            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-white text-[#0f0f10] font-mono font-medium text-xs">
-              DD
-            </div>
-            <div>
-              <span className="font-medium text-sm tracking-tight text-white">
-                DealerDesk
-              </span>
-              <p className="text-[11px] text-[#85858b]">Dealership CRM</p>
-            </div>
+          <Link href="/dashboard" className="flex items-center gap-2">
+            <DealerDeskLogo variant="light" subtitle="Dealership CRM" size="sm" />
           </Link>
           <button
             type="button"
             onClick={() => setMobileMenuOpen(false)}
-            className="lg:hidden rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+            className="rounded-lg p-1 text-slate-500 hover:bg-slate-100 lg:hidden"
             aria-label="Close navigation"
           >
             <X className="h-4 w-4" />
@@ -234,18 +284,18 @@ export default function Shell({ children }: ShellProps) {
 
         {/* Workspace Context */}
         {user.role === "dealerdesk_admin" ? (
-          <div className="mt-3 rounded-lg bg-slate-800/70 border border-slate-700/70 px-3 py-2">
-            <div className="flex items-center gap-1.5 text-xs font-medium text-[#a1a1a6]">
-              <Building2 className="h-3.5 w-3.5" />
-              SaaS Scope
+          <div className="crm-sidebar-context mt-2.5 rounded-lg px-2.5 py-1.5">
+            <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500">
+              <Building2 className="h-3 w-3" aria-hidden="true" />
+              Platform scope
             </div>
-            <p className="mt-0.5 text-xs font-medium text-white">Cross-Tenant Platform</p>
+            <p className="mt-0.5 text-xs font-medium text-slate-900">All dealerships</p>
           </div>
         ) : user.role === "customer" ? (
-          <div className="mt-3">
+          <div className="mt-2.5">
             <label
               htmlFor="customer-dealership"
-              className="block text-xs font-medium text-[#85858b] mb-1"
+              className="mb-1 block text-[11px] font-medium text-slate-600"
             >
               Dealership
             </label>
@@ -256,7 +306,7 @@ export default function Shell({ children }: ShellProps) {
                 const dealershipId = Number(event.target.value);
                 if (dealershipId) setActiveDealershipId(dealershipId);
               }}
-              className="w-full rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs text-white"
+              className="crm-select w-full py-1.5 text-xs"
             >
               <option value="" disabled>
                 Select dealership
@@ -269,11 +319,11 @@ export default function Shell({ children }: ShellProps) {
             </select>
           </div>
         ) : (
-          <div className="mt-3 rounded-lg bg-slate-800/70 border border-slate-700/70 px-3 py-2">
-            <span className="block text-xs font-medium text-[#85858b]">
+          <div className="crm-sidebar-context mt-2.5 rounded-lg px-2.5 py-1.5">
+            <span className="block text-[10px] font-medium text-slate-500">
               Workspace
             </span>
-            <p className="mt-0.5 truncate text-xs font-semibold text-white">
+            <p className="truncate text-xs font-medium text-slate-900">
               {dealershipName || "Loading dealership..."}
             </p>
           </div>
@@ -281,10 +331,10 @@ export default function Shell({ children }: ShellProps) {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
+      <nav aria-label="Main navigation" className="flex-1 space-y-3 px-2.5 py-2.5 overflow-y-auto lg:overflow-hidden">
         {navSections.map((section) => (
           <div key={section.title}>
-            <p className="px-2.5 text-xs font-medium text-[#85858b] mb-1.5">
+            <p className="mb-1 px-2 text-[10px] font-medium uppercase tracking-[0.12em] text-slate-400">
               {section.title}
             </p>
             <div className="space-y-0.5">
@@ -295,13 +345,17 @@ export default function Shell({ children }: ShellProps) {
                   <Link
                     key={link.href}
                     href={link.href}
-                    className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors ${
+                    className={`relative flex items-center gap-2 rounded-md px-2.5 py-2 text-[13px] font-medium transition-colors ${
                       isActive
-                        ? "bg-blue-600 text-white"
-                        : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                        ? "bg-slate-900 text-white"
+                        : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                     }`}
+                    aria-current={isActive ? "page" : undefined}
                   >
-                    <Icon className={`h-4 w-4 shrink-0 ${isActive ? "text-white" : "text-slate-400"}`} />
+                    {isActive && (
+                      <span className="absolute -left-2.5 h-5 w-1 rounded-r-full bg-blue-500" />
+                    )}
+                    <Icon className={`h-3.5 w-3.5 shrink-0 ${isActive ? "text-white" : "text-slate-500"}`} aria-hidden="true" />
                     <span className="truncate">{link.label}</span>
                   </Link>
                 );
@@ -312,28 +366,34 @@ export default function Shell({ children }: ShellProps) {
       </nav>
 
       {/* User Footer */}
-      <div className="p-3 border-t border-slate-800 bg-slate-950/50">
+      <div className="border-t border-slate-200/80 px-3 py-2.5 shrink-0">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="h-8 w-8 shrink-0 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center font-semibold text-xs text-blue-300">
-              {user.name.slice(0, 2).toUpperCase() || "DD"}
-            </div>
+            <Link
+              href="/profile"
+              aria-label="Open profile"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-700 hover:bg-slate-200"
+            >
+              {user.name.trim().slice(0, 2).toUpperCase() || "DD"}
+            </Link>
             <div className="min-w-0">
-              <p className="text-xs font-semibold text-white truncate">{user.name}</p>
-              <p className="text-[11px] text-slate-400 truncate capitalize">
+              <Link href="/profile" className="block truncate text-xs font-semibold text-slate-900 hover:underline">
+                {user.name}
+              </Link>
+              <p className="truncate text-[11px] capitalize text-slate-500">
                 {user.role.replaceAll("_", " ")}
               </p>
               {user.role !== "customer" && user.role !== "dealerdesk_admin" && (
                 <button
                   type="button"
                   onClick={() => void toggleAvailability()}
-                  className={`mt-0.5 inline-flex items-center gap-1 text-[10px] font-semibold ${
-                    isAvailable ? "text-emerald-400" : "text-amber-400"
+                  className={`mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold ${
+                    isAvailable ? "text-emerald-700" : "text-amber-700"
                   } hover:underline`}
                 >
                   <span
                     className={`h-1.5 w-1.5 rounded-full ${
-                      isAvailable ? "bg-emerald-400" : "bg-amber-400"
+                      isAvailable ? "bg-emerald-600" : "bg-amber-600"
                     }`}
                   />
                   {isAvailable ? "Available for Leads" : "Unavailable"}
@@ -341,14 +401,25 @@ export default function Shell({ children }: ShellProps) {
               )}
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => void handleLogout()}
-            title="Sign out"
-            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-rose-400 transition-colors"
-          >
-            <LogOut className="h-4 w-4" />
-          </button>
+          <div className="flex shrink-0 items-center gap-1">
+            <Link
+              href="/settings"
+              title="Settings"
+              aria-label="Settings"
+              className="rounded-md p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
+            >
+              <Settings className="h-4 w-4" aria-hidden="true" />
+            </Link>
+            <button
+              type="button"
+              onClick={() => void handleLogout()}
+              title="Sign out"
+              aria-label="Sign out"
+              className="rounded-md p-1.5 text-slate-500 transition-colors hover:bg-rose-50 hover:text-rose-700"
+            >
+              <LogOut className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -357,7 +428,7 @@ export default function Shell({ children }: ShellProps) {
   return (
     <div className="crm-shell">
       {/* Desktop Sidebar */}
-      <aside className="hidden lg:block w-64 shrink-0 h-screen sticky top-0 border-r border-slate-800">
+      <aside className="crm-sidebar sticky top-0 hidden h-screen w-64 shrink-0 border-r border-slate-200 lg:block">
         {sidebarContent}
       </aside>
 
@@ -365,10 +436,10 @@ export default function Shell({ children }: ShellProps) {
       {mobileMenuOpen && (
         <div className="fixed inset-0 z-50 lg:hidden flex">
           <div
-            className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs"
+            className="fixed inset-0 bg-black/45"
             onClick={() => setMobileMenuOpen(false)}
           />
-          <aside className="relative w-64 max-w-[80vw] h-full z-10 shadow-xl">
+          <aside className="crm-sidebar relative z-10 h-full w-64 max-w-[80vw] border-r border-slate-200 shadow-xl">
             {sidebarContent}
           </aside>
         </div>
@@ -399,6 +470,83 @@ export default function Shell({ children }: ShellProps) {
 
           <div className="flex items-center gap-2.5">
             {user.role !== "customer" && user.role !== "dealerdesk_admin" && (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setNotificationPanelOpen((open) => !open)}
+                  aria-label={`Notifications${notifications.length ? ` (${notifications.length})` : ""}`}
+                  aria-expanded={notificationPanelOpen}
+                  aria-controls="notification-center"
+                  className="relative rounded-lg p-2 text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
+                >
+                  <Bell className="h-4 w-4" aria-hidden="true" />
+                  {notifications.length > 0 && (
+                    <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-600 px-1 text-[10px] font-semibold leading-none text-white">
+                      {notifications.length > 9 ? "9+" : notifications.length}
+                    </span>
+                  )}
+                </button>
+                {notificationPanelOpen && (
+                  <section
+                    id="notification-center"
+                    aria-label="Notification center"
+                    className="absolute right-0 z-40 mt-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl"
+                  >
+                    <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+                      <h2 className="text-sm font-semibold text-slate-900">Notifications</h2>
+                      <span className="text-xs text-slate-500">
+                        {notifications.length} active
+                      </span>
+                    </div>
+                    <div className="max-h-96 overflow-y-auto">
+                      {notificationsError ? (
+                        <p className="px-4 py-6 text-center text-sm text-rose-700">
+                          Notifications could not be loaded.
+                        </p>
+                      ) : notifications.length === 0 ? (
+                        <p className="px-4 py-6 text-center text-sm text-slate-500">
+                          You&apos;re all caught up.
+                        </p>
+                      ) : (
+                        notifications.map((notification) => (
+                          <Link
+                            key={notification.id}
+                            href={notification.href}
+                            onClick={() => setNotificationPanelOpen(false)}
+                            className="block border-b border-slate-100 px-4 py-3 transition-colors last:border-b-0 hover:bg-slate-50"
+                          >
+                            <span className="flex items-center gap-2">
+                              <span
+                                className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                                  notification.severity === "urgent"
+                                    ? "bg-rose-600"
+                                    : notification.severity === "high"
+                                      ? "bg-amber-500"
+                                      : "bg-slate-400"
+                                }`}
+                              />
+                              <span className="truncate text-sm font-medium text-slate-900">
+                                {notification.title}
+                              </span>
+                            </span>
+                            <span className="mt-1 block pl-3.5 text-xs text-slate-600">
+                              {notification.message}
+                            </span>
+                            <time
+                              className="mt-1 block pl-3.5 text-[11px] text-slate-400"
+                              dateTime={notification.created_at}
+                            >
+                              {new Date(notification.created_at).toLocaleString()}
+                            </time>
+                          </Link>
+                        ))
+                      )}
+                    </div>
+                  </section>
+                )}
+              </div>
+            )}
+            {user.role !== "customer" && user.role !== "dealerdesk_admin" && (
               <Link href="/inbox" className="crm-btn-secondary hidden sm:inline-flex min-h-8 text-xs py-1.5 px-3">
                 <MessageSquare className="h-3.5 w-3.5 text-slate-500" />
                 Inbox
@@ -406,12 +554,30 @@ export default function Shell({ children }: ShellProps) {
             )}
             <Link href="/assistant" className="crm-btn-primary min-h-8 text-xs py-1.5 px-3">
               <Bot className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">AI Copilot</span>
+              <span className="hidden sm:inline">Assistant</span>
             </Link>
           </div>
         </header>
 
         <main className="crm-content">{children}</main>
+        <nav className="crm-mobile-nav lg:hidden" aria-label="Mobile navigation">
+          <Link href="/dashboard" data-active={pathname === "/dashboard"}>
+            <LayoutDashboard className="h-5 w-5" />
+            <span>Overview</span>
+          </Link>
+          <Link href="/leads" data-active={pathname === "/leads"}>
+            <Users className="h-5 w-5" />
+            <span>Leads</span>
+          </Link>
+          <Link href="/inbox" data-active={pathname === "/inbox"}>
+            <MessageSquare className="h-5 w-5" />
+            <span>Inbox</span>
+          </Link>
+          <Link href="/bookings" data-active={pathname === "/bookings"}>
+            <Calendar className="h-5 w-5" />
+            <span>Bookings</span>
+          </Link>
+        </nav>
       </div>
     </div>
   );

@@ -3,12 +3,14 @@ from decimal import Decimal
 import logging
 from zoneinfo import ZoneInfo
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.authorization import ensure_dealership_access
 from app.core.errors import (
+    BadGatewayError,
     ConflictError,
     ForbiddenError,
     NotFoundError,
@@ -35,6 +37,53 @@ from app.services import audit_service, dealership_service, email_service, outbo
 logger = logging.getLogger(__name__)
 
 
+def decode_vin(vin: str) -> dict[str, str | int | None]:
+    normalized_vin = vin.strip().upper()
+    if len(normalized_vin) != 17 or any(
+        character not in "ABCDEFGHJKLMNPRSTUVWXYZ0123456789"
+        for character in normalized_vin
+    ):
+        raise UnprocessableEntityError("VIN must contain 17 valid letters or digits")
+    try:
+        response = httpx.get(
+            "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValuesExtended",
+            params={"format": "json", "vin": normalized_vin},
+            timeout=8,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise BadGatewayError("The VIN decoder service could not be reached.") from exc
+
+    results = payload.get("Results") if isinstance(payload, dict) else None
+    if not isinstance(results, list) or not results or not isinstance(results[0], dict):
+        raise BadGatewayError("The VIN decoder returned an invalid response.")
+    decoded = results[0]
+
+    def field(name: str) -> str | None:
+        value = decoded.get(name)
+        if not isinstance(value, str) or not value.strip():
+            return None
+        return value.strip()
+
+    year_value = field("ModelYear")
+    try:
+        model_year = int(year_value) if year_value else None
+    except ValueError:
+        model_year = None
+    return {
+        "vin": normalized_vin,
+        "make": field("Make"),
+        "model": field("Model"),
+        "model_year": model_year,
+        "variant": field("Trim"),
+        "fuel_type": field("FuelTypePrimary"),
+        "drivetrain": field("DriveType"),
+        "transmission": field("TransmissionStyle"),
+        "body_class": field("BodyClass"),
+    }
+
+
 def create_vehicle(
     db: Session,
     dealership_id: int,
@@ -55,7 +104,7 @@ def create_vehicle(
     
     status_val = (payload.status or "available").lower()
     is_available = (status_val == "available")
-    payload_data = payload.model_dump(exclude={"brand_id", "status"})
+    payload_data = payload.model_dump(exclude={"brand_id", "status", "acquired_at"})
     
     vehicle = Vehicle(
         dealership_id=dealership_id,
@@ -63,13 +112,14 @@ def create_vehicle(
         make=brand.name,
         status=status_val,
         is_available=is_available,
+        acquired_at=payload.acquired_at or datetime.now(timezone.utc),
         **payload_data,
     )
     try:
         saved_vehicle = vehicle_repository.save(db, vehicle)
     except IntegrityError as exc:
         db.rollback()
-        raise ConflictError("Stock number already exists") from exc
+        raise ConflictError("Stock number or VIN already exists in this dealership") from exc
 
     # Record initial status history
     history = VehicleStatusHistory(
@@ -113,6 +163,9 @@ def list_vehicles(
     status: str | None = None,
     is_available: bool | None = None,
     test_drive_enabled: bool | None = None,
+    fuel_type: str | None = None,
+    transmission: str | None = None,
+    drivetrain: str | None = None,
     search: str | None = None,
     sort_by: str | None = None,
     order: str = "asc",
@@ -136,6 +189,9 @@ def list_vehicles(
         status=status,
         is_available=is_available,
         test_drive_enabled=test_drive_enabled,
+        fuel_type=fuel_type,
+        transmission=transmission,
+        drivetrain=drivetrain,
         search=search,
         sort_by=sort_by,
         order=order,
@@ -155,6 +211,9 @@ def count_vehicles(
     status: str | None = None,
     is_available: bool | None = None,
     test_drive_enabled: bool | None = None,
+    fuel_type: str | None = None,
+    transmission: str | None = None,
+    drivetrain: str | None = None,
     search: str | None = None,
 ) -> int:
     return vehicle_repository.count_for_dealership(
@@ -167,6 +226,9 @@ def count_vehicles(
         status=status,
         is_available=is_available,
         test_drive_enabled=test_drive_enabled,
+        fuel_type=fuel_type,
+        transmission=transmission,
+        drivetrain=drivetrain,
         search=search,
     )
 
@@ -183,12 +245,14 @@ def list_public_vehicles(
     order: str = "asc",
     page: int | None = None,
     page_size: int | None = None,
+    limit: int | None = None,
+    include_images: bool = True,
 ) -> list[Vehicle]:
-    dealership_service.get_active_dealership(db, dealership_id)
-    return vehicle_repository.list_for_dealership(
+    vehicles = vehicle_repository.list_for_dealership(
         db,
         dealership_id,
         include_archived_brands=False,
+        active_dealership_only=True,
         brand_id=brand_id,
         min_price=min_price,
         max_price=max_price,
@@ -199,7 +263,13 @@ def list_public_vehicles(
         order=order,
         page=page,
         page_size=page_size,
+        limit=limit,
+        include_images=include_images,
+        include_status_history=False,
     )
+    if not vehicles:
+        dealership_service.get_active_dealership(db, dealership_id)
+    return vehicles
 
 
 def get_vehicle(

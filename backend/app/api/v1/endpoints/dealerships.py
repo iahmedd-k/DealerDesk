@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.core.authorization import ensure_dealership_access
+from app.core.redis import redis_client
 from app.db.session import get_db
 from app.dependencies.auth import get_current_user
 from app.dependencies.workspace import require_dealerdesk_admin
@@ -45,8 +46,15 @@ def run_retention_maintenance(
 
 
 @router.get("/public", response_model=list[DealershipResponse])
-def list_public_dealerships(db: Session = Depends(get_db)) -> list[Dealership]:
-    return dealership_service.list_active_dealerships(db)
+def list_public_dealerships(db: Session = Depends(get_db)) -> list[Dealership] | list[dict]:
+    cache_key = "dealerdesk:public:dealerships"
+    cached = redis_client.get_json(cache_key)
+    if isinstance(cached, list):
+        return cached
+    items = dealership_service.list_active_dealerships(db)
+    serialized = [DealershipResponse.model_validate(d).model_dump(mode="json") for d in items]
+    redis_client.set_json(cache_key, serialized, ttl_seconds=60)
+    return serialized
 
 
 @router.get("", response_model=list[DealershipDetailedResponse])

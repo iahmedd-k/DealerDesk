@@ -4,6 +4,8 @@ import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
+  ChevronLeft,
+  ChevronRight,
   Calendar,
   Clock,
   CheckCircle2,
@@ -15,7 +17,7 @@ import {
 import Shell from "../components/Shell";
 import { useAuth } from "../providers";
 import { api } from "../api";
-import type { TestDriveBooking, TestDriveSlot, Vehicle } from "../lib/types";
+import type { StaffUser, TestDriveBooking, TestDriveSlot, Vehicle } from "../lib/types";
 
 function getBookingBadge(status: string) {
   switch (status) {
@@ -25,6 +27,8 @@ function getBookingBadge(status: string) {
       return "crm-badge crm-badge-danger";
     case "completed":
       return "crm-badge crm-badge-info";
+    case "no_show":
+      return "crm-badge crm-badge-warning";
     default:
       return "crm-badge crm-badge-neutral";
   }
@@ -36,9 +40,12 @@ function BookingsInner() {
   const preselectedVehicleId = searchParams.get("vehicle");
 
   const [activeTab, setActiveTab] = useState<"slots" | "bookings">("slots");
+  const [scheduleView, setScheduleView] = useState<"agenda" | "day" | "week">("agenda");
+  const [calendarDate, setCalendarDate] = useState(() => new Date());
   const [slots, setSlots] = useState<TestDriveSlot[]>([]);
   const [bookings, setBookings] = useState<TestDriveBooking[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [staff, setStaff] = useState<StaffUser[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [bookingSlot, setBookingSlot] = useState<TestDriveSlot | null>(null);
@@ -56,6 +63,7 @@ function BookingsInner() {
   const [errorMsg, setErrorMsg] = useState("");
 
   const [showCreateSlotModal, setShowCreateSlotModal] = useState(false);
+  const [creatingSlot, setCreatingSlot] = useState(false);
   const [newSlotVehicleId, setNewSlotVehicleId] = useState<number | "">("");
   const [newSlotStart, setNewSlotStart] = useState("");
   const [newSlotEnd, setNewSlotEnd] = useState("");
@@ -63,6 +71,8 @@ function BookingsInner() {
 
   const canManageSlots =
     user?.role === "dealership_admin" || user?.role === "manager";
+  const canManageBookings =
+    canManageSlots || user?.role === "sales_rep";
 
   useEffect(() => {
     if (!authReady || !user) return;
@@ -83,12 +93,16 @@ function BookingsInner() {
           ? `/dealerships/${activeDealershipId}/vehicles/public`
           : `/dealerships/${activeDealershipId}/vehicles`,
       ).then((result) => (Array.isArray(result) ? result : [result])),
+      user.role === "dealership_admin" || user.role === "manager"
+        ? api<StaffUser[]>(`/dealerships/${activeDealershipId}/staff`)
+        : Promise.resolve([] as StaffUser[]),
     ])
-      .then(([nextSlots, nextBookings, nextVehicles]) => {
+      .then(([nextSlots, nextBookings, nextVehicles, nextStaff]) => {
         if (cancelled) return;
         setSlots(nextSlots);
         setBookings(nextBookings);
         setVehicles(nextVehicles);
+        setStaff(nextStaff);
       })
       .catch((cause: unknown) => {
         if (!cancelled) setErrorMsg(cause instanceof Error ? cause.message : "Could not load test drives.");
@@ -186,11 +200,50 @@ function BookingsInner() {
     }
   }
 
+  async function updateBooking(
+    booking: TestDriveBooking,
+    changes: { status?: "completed" | "no_show"; assigned_to_user_id?: number | null },
+  ) {
+    if (!activeDealershipId) return;
+    setErrorMsg("");
+    try {
+      const updated = await api<TestDriveBooking>(
+        `/dealerships/${activeDealershipId}/test-drive-bookings/${booking.id}`,
+        { method: "PATCH", body: JSON.stringify(changes) },
+      );
+      setBookings((current) =>
+        current.map((item) => item.id === updated.id ? updated : item),
+      );
+      setSuccessMsg(
+        changes.status
+          ? `Booking #${booking.id} marked ${changes.status === "no_show" ? "no-show" : "completed"}.`
+          : "Booking host updated.",
+      );
+    } catch (cause) {
+      setErrorMsg(cause instanceof Error ? cause.message : "Could not update this booking.");
+    }
+  }
+
   async function handleCreateSlot(e: React.FormEvent) {
     e.preventDefault();
-    if (!activeDealershipId || !newSlotVehicleId || !newSlotStart || !newSlotEnd) return;
+    if (!activeDealershipId || !newSlotVehicleId || !newSlotStart || !newSlotEnd || creatingSlot) return;
+    const startTime = new Date(newSlotStart);
+    const endTime = new Date(newSlotEnd);
+    if (startTime <= new Date()) {
+      setErrorMsg("Slot start time must be in the future.");
+      return;
+    }
+    if (endTime <= startTime) {
+      setErrorMsg("Slot end time must be after the start time.");
+      return;
+    }
+    if (endTime.getTime() - startTime.getTime() > 8 * 60 * 60 * 1000) {
+      setErrorMsg("A test-drive slot cannot be longer than 8 hours.");
+      return;
+    }
     setErrorMsg("");
     setSuccessMsg("");
+    setCreatingSlot(true);
     try {
       const created = await api<TestDriveSlot>(
         `/dealerships/${activeDealershipId}/test-drive-slots`,
@@ -213,6 +266,8 @@ function BookingsInner() {
       setSuccessMsg("Custom test-drive slot created.");
     } catch (cause) {
       setErrorMsg(cause instanceof Error ? cause.message : "Could not create slot.");
+    } finally {
+      setCreatingSlot(false);
     }
   }
 
@@ -244,12 +299,31 @@ function BookingsInner() {
       (!preselectedVehicleId || String(slot.vehicle_id) === preselectedVehicleId)
     );
   });
+  const calendarStart = new Date(calendarDate);
+  if (scheduleView === "week") {
+    calendarStart.setDate(calendarStart.getDate() - ((calendarStart.getDay() + 6) % 7));
+  }
+  calendarStart.setHours(0, 0, 0, 0);
+  const calendarDays = Array.from(
+    { length: scheduleView === "day" ? 1 : 7 },
+    (_, index) => {
+      const day = new Date(calendarStart);
+      day.setDate(calendarStart.getDate() + index);
+      return day;
+    },
+  );
+
+  function shiftCalendar(direction: -1 | 1) {
+    const next = new Date(calendarDate);
+    next.setDate(next.getDate() + direction * (scheduleView === "day" ? 1 : 7));
+    setCalendarDate(next);
+  }
 
   return (
     <Shell>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-medium tracking-tight text-[#171717]">
+          <h1 className="crm-page-title">
             Test-Drive Schedule & Bookings
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -321,9 +395,57 @@ function BookingsInner() {
         </div>
       )}
 
+      {activeTab === "bookings" && bookings.length > 0 && (
+        <div className="crm-card mb-4 flex flex-wrap items-center justify-between gap-3 p-3">
+          <div className="flex items-center gap-1">
+            <button type="button" onClick={() => shiftCalendar(-1)} className="crm-btn-secondary px-2.5" aria-label="Previous calendar period">
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button type="button" onClick={() => setCalendarDate(new Date())} className="crm-btn-secondary px-3 text-xs">
+              Today
+            </button>
+            <button type="button" onClick={() => shiftCalendar(1)} className="crm-btn-secondary px-2.5" aria-label="Next calendar period">
+              <ChevronRight className="h-4 w-4" />
+            </button>
+            <span className="ml-2 text-xs font-medium text-slate-700">
+              {scheduleView === "day"
+                ? calendarStart.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })
+                : scheduleView === "week"
+                  ? `${calendarDays[0].toLocaleDateString([], { month: "short", day: "numeric" })} – ${calendarDays[6].toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}`
+                  : "All test-drive bookings"}
+            </span>
+          </div>
+          <div className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-1">
+            {(["agenda", "day", "week"] as const).map((view) => (
+              <button
+                key={view}
+                type="button"
+                onClick={() => setScheduleView(view)}
+                aria-pressed={scheduleView === view}
+                className={`rounded-md px-3 py-1.5 text-xs capitalize ${
+                  scheduleView === view ? "bg-blue-50 font-medium text-blue-700" : "text-slate-500"
+                }`}
+              >
+                {view}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {loading ? (
-        <div className="crm-card p-12 text-center text-sm text-slate-500">
-          Loading test-drive schedule...
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3" aria-label="Loading test-drive schedule">
+          {[1, 2, 3].map((item) => (
+            <div key={item} className="crm-card p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="crm-skeleton h-4 w-32" />
+                <span className="crm-skeleton h-5 w-14" />
+              </div>
+              <span className="crm-skeleton block h-5 w-44" />
+              <span className="crm-skeleton block h-16 w-full" />
+              <span className="crm-skeleton block h-9 w-full" />
+            </div>
+          ))}
         </div>
       ) : activeTab === "slots" ? (
         filteredSlots.length === 0 ? (
@@ -347,7 +469,7 @@ function BookingsInner() {
                   <div>
                     <div className="flex items-center justify-between mb-3">
                       <span className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
-                        <Calendar className="h-3.5 w-3.5 text-blue-600" />
+                        <Calendar className="h-3.5 w-3.5 text-slate-500" />
                         {new Date(slot.starts_at).toLocaleDateString([], {
                           weekday: "short",
                           month: "short",
@@ -438,16 +560,17 @@ function BookingsInner() {
             Switch to Available Slots to schedule a new test drive.
           </p>
         </div>
-      ) : (
+      ) : scheduleView === "agenda" ? (
         <div className="crm-table-wrap">
-          <table className="crm-table">
+          <table className="crm-table crm-table-compact table-fixed min-w-[680px]">
             <thead>
               <tr>
-                <th>Booking</th>
-                <th>Vehicle</th>
-                <th>Schedule</th>
-                <th>Status</th>
-                <th className="text-right">Actions</th>
+                <th className="w-[16%]">Booking</th>
+                <th className="w-[14%]">Vehicle</th>
+                <th className="w-[20%]">Schedule</th>
+                <th className="w-[15%]">Host</th>
+                <th className="w-[10%]">Status</th>
+                <th className="w-[25%] text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -459,24 +582,67 @@ function BookingsInner() {
                   <tr key={booking.id}>
                     <td>
                       <div className="font-semibold text-slate-900">Booking #{booking.id}</div>
-                      <div className="text-xs text-slate-500">
+                      <div className="break-all text-xs text-slate-500">
                         {booking.customer_email || `Customer #${booking.customer_id}`}
                       </div>
                     </td>
-                    <td className="text-slate-700">
+                    <td className="break-words text-slate-700">
                       {vehicle
                         ? `${vehicle.model_year} ${vehicle.make} ${vehicle.model}`
                         : `Vehicle #${booking.vehicle_id}`}
                     </td>
-                    <td className="text-xs text-slate-600">
+                    <td className="whitespace-nowrap text-xs text-slate-600">
                       {startsAt ? new Date(startsAt).toLocaleString() : `Slot #${booking.slot_id}`}
+                    </td>
+                    <td>
+                      {canManageSlots ? (
+                        <select
+                          value={booking.assigned_to_user_id ?? ""}
+                          onChange={(event) =>
+                            void updateBooking(booking, {
+                              assigned_to_user_id: event.target.value
+                                ? Number(event.target.value)
+                                : null,
+                            })
+                          }
+                          aria-label={`Assign host for booking ${booking.id}`}
+                          className="crm-select min-w-0 w-full text-xs"
+                        >
+                          <option value="">Unassigned</option>
+                          {staff.map((member) => (
+                            <option key={member.id} value={member.id}>{member.name}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="text-xs text-slate-600">
+                          {staff.find((member) => member.id === booking.assigned_to_user_id)?.name ?? "—"}
+                        </span>
+                      )}
                     </td>
                     <td>
                       <span className={getBookingBadge(booking.status)}>{booking.status}</span>
                     </td>
                     <td className="text-right">
                       {booking.status === "booked" && (
-                        <div className="inline-flex items-center gap-1.5">
+                        <div className="flex flex-wrap justify-end gap-1.5">
+                          {canManageBookings && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => void updateBooking(booking, { status: "completed" })}
+                                className="crm-btn-secondary py-1.5 px-2.5 text-xs"
+                              >
+                                Complete
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void updateBooking(booking, { status: "no_show" })}
+                                className="crm-btn-secondary py-1.5 px-2.5 text-xs"
+                              >
+                                No-show
+                              </button>
+                            </>
+                          )}
                           <button
                             type="button"
                             onClick={() =>
@@ -504,6 +670,56 @@ function BookingsInner() {
               })}
             </tbody>
           </table>
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+          <div
+            className={scheduleView === "week" ? "grid min-w-[980px]" : "grid min-w-[360px]"}
+            style={{ gridTemplateColumns: `repeat(${calendarDays.length}, minmax(0, 1fr))` }}
+          >
+            {calendarDays.map((day) => {
+              const dayBookings = bookings.filter((booking) => {
+                const slot = slots.find((item) => item.id === booking.slot_id);
+                const startsAt = booking.starts_at || slot?.starts_at;
+                return startsAt && new Date(startsAt).toDateString() === day.toDateString();
+              });
+              return (
+                <section key={day.toISOString()} className="min-h-72 border-r border-slate-200 last:border-r-0">
+                  <header className="border-b border-slate-200 bg-slate-50 px-3 py-2">
+                    <p className="text-[11px] font-medium uppercase text-slate-500">
+                      {day.toLocaleDateString([], { weekday: "short" })}
+                    </p>
+                    <p className="text-xs font-semibold text-slate-800">
+                      {day.toLocaleDateString([], { month: "short", day: "numeric" })}
+                    </p>
+                  </header>
+                  <div className="space-y-2 p-2">
+                    {dayBookings.map((booking) => {
+                      const vehicle = vehicles.find((item) => item.id === booking.vehicle_id);
+                      const startsAt = booking.starts_at || slots.find((item) => item.id === booking.slot_id)?.starts_at;
+                      return (
+                        <article key={booking.id} className="rounded-lg border border-blue-100 bg-blue-50/70 p-2">
+                          <p className="text-[11px] font-semibold text-blue-900">
+                            {startsAt ? new Date(startsAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "Time unavailable"}
+                          </p>
+                          <p className="mt-1 truncate text-[11px] text-slate-800">
+                            {booking.customer_name || booking.customer_email || `Customer #${booking.customer_id}`}
+                          </p>
+                          <p className="truncate text-[10px] text-slate-500">
+                            {vehicle ? `${vehicle.model_year} ${vehicle.make} ${vehicle.model}` : `Vehicle #${booking.vehicle_id}`}
+                          </p>
+                          <span className={getBookingBadge(booking.status)}>{booking.status}</span>
+                        </article>
+                      );
+                    })}
+                    {dayBookings.length === 0 && (
+                      <p className="pt-4 text-center text-[10px] text-slate-400">No bookings</p>
+                    )}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -759,8 +975,8 @@ function BookingsInner() {
                 >
                   Cancel
                 </button>
-                <button type="submit" className="crm-btn-primary">
-                  Create Slot
+                <button type="submit" className="crm-btn-primary" disabled={creatingSlot}>
+                  {creatingSlot ? "Creating..." : "Create Slot"}
                 </button>
               </div>
             </form>

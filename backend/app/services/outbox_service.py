@@ -104,7 +104,11 @@ def dispatch_pending_outbox_events(
         query = query.where(OutboxEvent.dealership_id == dealership_id)
 
     events = list(
-        db.scalars(query.order_by(OutboxEvent.created_at.asc()).limit(max_batch))
+        db.scalars(
+            query.order_by(OutboxEvent.created_at.asc())
+            .limit(max_batch)
+            .with_for_update(skip_locked=True)
+        )
     )
 
     stats = {
@@ -120,6 +124,9 @@ def dispatch_pending_outbox_events(
         target = event.target_webhook_url or default_webhook_url
         if not target:
             stats["skipped_no_target"] += 1
+            if not dry_run:
+                event.status = "no_target"
+                event.last_error = "No webhook target is configured."
             continue
 
         if dry_run:

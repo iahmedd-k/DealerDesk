@@ -90,9 +90,10 @@ class OTPVerificationResponse(BaseModel):
 
 class BookingVerificationInitiateRequest(BaseModel):
     slot_id: int = Field(..., description="ID of the test-drive slot")
-    destination: str = Field(..., min_length=3, max_length=128, description="Customer phone number or email address")
+    destination: str = Field(..., min_length=3, max_length=128, description="Customer email address")
     channel: str = Field(default="website", description="Channel requesting verification (website, whatsapp, voice, sms)")
     customer_name: str | None = Field(default=None, max_length=100, description="Customer full name")
+    customer_phone: str | None = Field(default=None, max_length=32, description="Customer phone number")
     conversation_id: int | None = Field(default=None, description="Optional active conversation session ID")
 
 
@@ -104,14 +105,16 @@ class BookingVerificationInitiateResponse(BaseModel):
     channel: str
     expires_at: str
     message: str
+    delivery_status: str = "email_sent"
 
 
 class BookingVerificationConfirmRequest(BaseModel):
     hold_token: str = Field(..., min_length=10, description="Hold reservation token")
     code: str = Field(..., min_length=6, max_length=6, description="6-digit verification code")
-    destination: str = Field(..., min_length=3, max_length=128, description="Customer phone or email used during initiation")
+    destination: str = Field(..., min_length=3, max_length=128, description="Customer email used during initiation")
     channel: str = Field(default="website", description="Communication channel")
     customer_name: str | None = Field(default=None, max_length=100, description="Customer full name")
+    customer_phone: str | None = Field(default=None, max_length=32, description="Customer phone number")
     notes: str | None = Field(default=None, max_length=500, description="Customer booking notes")
     confirmed: bool = Field(default=True, description="Explicit customer confirmation to book the slot")
     conversation_id: int | None = Field(default=None, description="Optional active conversation session ID")

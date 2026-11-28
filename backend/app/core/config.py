@@ -86,6 +86,35 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("RESEND_REPLY_TO", "resend_reply_to"),
     )
+    google_oauth_client_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GOOGLE_OAUTH_CLIENT_ID", "google_oauth_client_id"),
+    )
+    google_oauth_client_secret: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "GOOGLE_OAUTH_CLIENT_SECRET",
+            "google_oauth_client_secret",
+        ),
+    )
+    google_oauth_redirect_uri: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "GOOGLE_OAUTH_REDIRECT_URI",
+            "google_oauth_redirect_uri",
+        ),
+    )
+    gmail_token_encryption_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "GMAIL_TOKEN_ENCRYPTION_KEY",
+            "gmail_token_encryption_key",
+        ),
+    )
+    frontend_base_url: str = Field(
+        default="http://localhost:3000",
+        validation_alias=AliasChoices("FRONTEND_BASE_URL", "frontend_base_url"),
+    )
     twilio_account_sid: SecretStr | None = Field(
         default=None,
         validation_alias=AliasChoices("TWILIO_ACCOUNT_SID", "twilio_account_sid"),
@@ -97,6 +126,20 @@ class Settings(BaseSettings):
     twilio_whatsapp_from: str = Field(
         default="whatsapp:+14155238886",
         validation_alias=AliasChoices("TWILIO_WHATSAPP_FROM", "twilio_whatsapp_from"),
+    )
+    twilio_webhook_base_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "TWILIO_WEBHOOK_BASE_URL",
+            "twilio_webhook_base_url",
+        ),
+    )
+    twilio_status_callback_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "TWILIO_STATUS_CALLBACK_URL",
+            "twilio_status_callback_url",
+        ),
     )
     vapi_api_key: SecretStr | None = Field(
         default=None,
@@ -169,6 +212,35 @@ class Settings(BaseSettings):
         default="auto",
         validation_alias=AliasChoices("LLM_PROVIDER", "llm_provider"),
     )
+    groq_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GROQ_API_KEY", "groq_api_key"),
+    )
+    groq_base_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GROQ_BASE_URL", "groq_base_url"),
+    )
+    groq_model: str = Field(
+        default="llama-3.3-70b-versatile",
+        validation_alias=AliasChoices("GROQ_MODEL", "groq_model"),
+    )
+    groq_fallback_model: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GROQ_FALLBACK_MODEL", "groq_fallback_model"),
+    )
+
+    def get_llm_config(self) -> tuple[str, str, str, str | None] | None:
+        """Return (chat_completions_url, api_key, model, fallback_model) if an LLM is configured."""
+        if self.llm_api_url and self.llm_api_key and self.llm_api_key.get_secret_value():
+            url = self.llm_api_url.rstrip("/")
+            if not url.endswith("/chat/completions"):
+                url = f"{url}/chat/completions"
+            return url, self.llm_api_key.get_secret_value(), self.llm_model, None
+        if self.groq_api_key and self.groq_api_key.get_secret_value():
+            base = (self.groq_base_url or "https://api.groq.com/openai/v1").rstrip("/")
+            url = base if base.endswith("/chat/completions") else f"{base}/chat/completions"
+            return url, self.groq_api_key.get_secret_value(), self.groq_model, self.groq_fallback_model
+        return None
     dealerdesk_admin_name: str = Field(
         default="DealerDesk Admin",
         validation_alias=AliasChoices(
@@ -189,6 +261,24 @@ class Settings(BaseSettings):
             "DEALERDESK_ADMIN_PASSWORD",
             "dealerdesk_admin_password",
         ),
+    )
+    upstash_redis_rest_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "UPSTASH_REDIS_REST_URL",
+            "upstash_redis_rest_url",
+        ),
+    )
+    upstash_redis_rest_token: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "UPSTASH_REDIS_REST_TOKEN",
+            "upstash_redis_rest_token",
+        ),
+    )
+    redis_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("REDIS_URL", "redis_url"),
     )
 
     @field_validator("cors_origins", mode="before")

@@ -299,6 +299,7 @@ def test_test_drive_settings_slots_and_customer_booking(client, seeded_users) ->
     booking = client.post(
         f"/api/v1/dealerships/{dealership_id}/test-drive-slots/{slot_id}/bookings",
         headers=customer_headers,
+        json={"confirmed": True},
     )
     assert booking.status_code == 201
     booking_id = booking.json()["id"]

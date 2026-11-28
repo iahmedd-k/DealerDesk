@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { api } from "../api";
+import DealerDeskLogo from "../components/DealerDeskLogo";
 import { useAuth, User } from "../providers";
 
 export default function SignupPage() {
@@ -38,13 +39,8 @@ export default function SignupPage() {
   return (
     <main className="auth-shell">
       <section className="auth-card">
-        <Link className="inline-flex items-center gap-2.5" href="/" aria-label="DealerDesk home">
-          <span className="flex h-8 w-8 items-center justify-center rounded-md bg-[#171717] font-mono font-medium text-xs text-white">
-            DD
-          </span>
-          <span className="text-base font-medium tracking-tight text-[#171717]">
-            DealerDesk
-          </span>
+        <Link href="/" aria-label="DealerDesk home">
+          <DealerDeskLogo variant="light" />
         </Link>
 
         <h1 className="mt-7 text-2xl font-medium tracking-tight text-[#171717]">Create an account</h1>

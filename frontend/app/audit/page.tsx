@@ -81,7 +81,7 @@ export default function AuditPage() {
     <Shell>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-medium tracking-tight text-[#171717]">
+          <h1 className="crm-page-title">
             Compliance & Audit Trail
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -132,15 +132,15 @@ export default function AuditPage() {
         </div>
       ) : (
         <div className="crm-table-wrap">
-          <table className="crm-table">
+          <table className="crm-table crm-table-compact table-fixed min-w-[680px]">
             <thead>
               <tr>
-                <th>Timestamp</th>
-                <th>Actor</th>
-                <th>Action</th>
-                <th>Resource</th>
-                <th>IP Address</th>
-                <th className="text-right">Payload</th>
+                <th className="w-[18%]">Timestamp</th>
+                <th className="w-[20%]">Actor</th>
+                <th className="w-[18%]">Action</th>
+                <th className="w-[16%]">Resource</th>
+                <th className="w-[12%]">IP Address</th>
+                <th className="w-[16%] text-right">Payload</th>
               </tr>
             </thead>
             <tbody>
@@ -153,14 +153,20 @@ export default function AuditPage() {
               ) : (
                 filteredLogs.map((log) => (
                   <tr key={log.id}>
-                    <td className="font-mono text-xs text-slate-600">
-                      {new Date(log.created_at).toLocaleString([], {
-                        dateStyle: "short",
-                        timeStyle: "medium",
-                      })}
+                    <td className="whitespace-nowrap font-mono text-[10px] text-slate-600">
+                      <div>
+                        {new Date(log.created_at).toLocaleDateString([], { dateStyle: "short" })}
+                      </div>
+                      <div>
+                        {new Date(log.created_at).toLocaleTimeString([], {
+                          hour: "numeric",
+                          minute: "2-digit",
+                          second: "2-digit",
+                        })}
+                      </div>
                     </td>
                     <td>
-                      <div className="font-semibold text-slate-900 text-xs">
+                      <div className="break-all font-semibold text-slate-900 text-xs">
                         {log.actor_email}
                       </div>
                       <div className="text-[11px] text-slate-500 font-mono">
@@ -168,17 +174,19 @@ export default function AuditPage() {
                       </div>
                     </td>
                     <td>
-                      <span className={getActionBadge(log.action)}>{log.action}</span>
+                      <span className={`${getActionBadge(log.action)} max-w-full break-all`}>
+                        {log.action}
+                      </span>
                     </td>
-                    <td className="font-mono text-xs text-slate-700">
+                    <td className="break-words font-mono text-xs text-slate-700">
                       {log.resource_type} (#{log.resource_id})
                     </td>
-                    <td className="font-mono text-xs text-slate-500">{log.ip_address}</td>
+                    <td className="break-all font-mono text-[10px] text-slate-500">{log.ip_address}</td>
                     <td className="text-right">
                       <button
                         type="button"
                         onClick={() => setSelectedLog(log)}
-                        className="crm-btn-secondary py-1 px-2.5 text-xs"
+                        className="crm-btn-secondary whitespace-nowrap py-1 px-1.5 text-[11px]"
                       >
                         <Eye className="h-3.5 w-3.5" />
                         View JSON
@@ -198,7 +206,7 @@ export default function AuditPage() {
             <div className="flex items-start justify-between border-b border-slate-200 pb-4 mb-4">
               <div>
                 <h3 className="text-base font-medium text-[#171717] flex items-center gap-2">
-                  <FileCode className="h-4 w-4 text-blue-600" />
+                  <FileCode className="h-4 w-4 text-slate-500" />
                   Audit Record #{selectedLog.id}
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">

@@ -21,7 +21,9 @@ def test_booked_lead_can_transition_to_won_and_marks_vehicle_sold(monkeypatch) -
         test_drive_booking_id=77,
         assigned_to_user_id=None,
         status="test_drive_scheduled",
+        lost_reason=None,
         next_follow_up_at=None,
+        deal_value=None,
         updated_at=None,
     )
     booking = SimpleNamespace(
@@ -45,21 +47,27 @@ def test_booked_lead_can_transition_to_won_and_marks_vehicle_sold(monkeypatch) -
     )
     staff = SimpleNamespace(id=2, role="dealership_admin", dealership_id=1)
 
-    monkeypatch.setattr(lead_service.lead_repository, "get_lead", lambda db, did, lid: lead)
+    monkeypatch.setattr(lead_service.lead_repository, "get_lead", lambda db, did, lid, **_kw: lead)
     monkeypatch.setattr(lead_service.lead_repository, "get_booking", lambda db, did, bid: booking)
-    monkeypatch.setattr(lead_service.lead_repository, "get_vehicle", lambda db, did, vid: vehicle)
+    monkeypatch.setattr(lead_service.lead_repository, "get_vehicle", lambda db, did, vid, **_kw: vehicle)
     monkeypatch.setattr(lead_service.lead_repository, "save", lambda db, obj: obj)
 
-    transitioned: list[tuple[int, str, str | None]] = []
+    transitioned: list[tuple[int, str, str | None, str]] = []
 
     def fake_transition(db, did, vid, user, payload):
-        transitioned.append((vid, payload.status, payload.notes))
+        transitioned.append((vid, payload.status, payload.notes, lead.status))
         vehicle.status = payload.status
         vehicle.is_available = False
         vehicle.test_drive_enabled = False
         return vehicle
 
     monkeypatch.setattr(lead_service.vehicle_service, "transition_vehicle_status", fake_transition)
+    outbox_events = []
+    monkeypatch.setattr(
+        lead_service.outbox_service,
+        "enqueue_event",
+        lambda _db, **kwargs: outbox_events.append(kwargs),
+    )
 
     db = MagicMock()
 
@@ -78,7 +86,17 @@ def test_booked_lead_can_transition_to_won_and_marks_vehicle_sold(monkeypatch) -
 
     assert updated_lead.status == "won"
     assert booking.status == "completed"
-    assert transitioned == [(50, "sold", "Sold via Lead #10 (Alice Buyer)")]
+    assert transitioned == [(50, "sold", "Sold via Lead #10 (Alice Buyer)", "won")]
+    assert outbox_events == [
+        {
+            "dealership_id": 1,
+            "event_type": "lead.won",
+            "aggregate_type": "customer_lead",
+            "aggregate_id": 10,
+            "payload": {"lead_id": 10, "vehicle_id": 50, "deal_value": 0.0},
+            "commit": False,
+        }
+    ]
 
     # Second lead trying to mark the same already-sold vehicle 'won' must be rejected
     second_lead = SimpleNamespace(
@@ -91,12 +109,74 @@ def test_booked_lead_can_transition_to_won_and_marks_vehicle_sold(monkeypatch) -
         test_drive_booking_id=None,
         assigned_to_user_id=None,
         status="qualified",
+        lost_reason=None,
         next_follow_up_at=None,
         updated_at=None,
     )
-    monkeypatch.setattr(lead_service.lead_repository, "get_lead", lambda db, did, lid: second_lead)
+    monkeypatch.setattr(lead_service.lead_repository, "get_lead", lambda db, did, lid, **_kw: second_lead)
     with pytest.raises(ConflictError, match="already been sold"):
         lead_service.update_lead(db, 1, 11, staff, won_payload)
+
+
+def test_marking_a_linked_lead_lost_cancels_its_active_booking(monkeypatch) -> None:
+    from app.schemas.workspace import CustomerLeadUpdateRequest
+
+    lead = SimpleNamespace(
+        id=10,
+        dealership_id=1,
+        name="Alice Buyer",
+        email="alice@example.com",
+        requested_vehicle_id=None,
+        test_drive_booking_id=77,
+        assigned_to_user_id=None,
+        status="test_drive_scheduled",
+        lost_reason=None,
+        next_follow_up_at=None,
+        updated_at=None,
+        deal_value=None,
+    )
+    booking = SimpleNamespace(id=77, status="booked", vehicle_id=50)
+    staff = SimpleNamespace(id=2, role="manager", dealership_id=1)
+    events = []
+    cancellations = []
+
+    monkeypatch.setattr(
+        lead_service.lead_repository,
+        "get_lead",
+        lambda *_args, **_kwargs: lead,
+    )
+    monkeypatch.setattr(
+        lead_service.lead_repository,
+        "get_booking",
+        lambda *_args, **_kwargs: booking,
+    )
+    monkeypatch.setattr(lead_service.lead_repository, "save", lambda _db, obj: obj)
+    monkeypatch.setattr(lead_service, "_record_activity", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        lead_service.outbox_service,
+        "enqueue_event",
+        lambda _db, **kwargs: events.append(kwargs),
+    )
+
+    def cancel_booking(_db, _dealership_id, booking_id, _user, payload):
+        cancellations.append((booking_id, payload.reason, lead.status))
+        booking.status = "cancelled"
+
+    monkeypatch.setattr(lead_service.test_drive_service, "cancel_booking", cancel_booking)
+
+    updated = lead_service.update_lead(
+        MagicMock(),
+        1,
+        10,
+        staff,
+        CustomerLeadUpdateRequest(status="lost"),
+    )
+
+    assert updated.status == "lost"
+    assert booking.status == "cancelled"
+    assert cancellations == [(77, "Lead marked lost", "lost")]
+    assert events[0]["event_type"] == "lead.lost"
+    assert events[0]["commit"] is False
 
 
 def test_vehicle_sold_cleanup_deactivates_slots_releases_holds_and_cancels_bookings(

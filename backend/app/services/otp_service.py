@@ -26,7 +26,7 @@ def request_otp(
     channel: str,
     identifier: str,
     purpose: str = "test_drive_booking",
-) -> tuple[str, datetime]:
+) -> tuple[str, datetime, str]:
     """
     Generates and records a cryptographically secure single-use 6-digit OTP code.
     Enforces a 60-second cooldown period between requests.
@@ -84,9 +84,11 @@ def request_otp(
     db.commit()
 
     # 4. Dispatch OTP through requested channel protected by circuit breakers
-    _dispatch_otp_message(dealership_id, channel, clean_identifier, raw_code, purpose)
+    delivery_status = _dispatch_otp_message(
+        dealership_id, channel, clean_identifier, raw_code, purpose
+    )
 
-    return raw_code, expires_at
+    return raw_code, expires_at, delivery_status
 
 
 def verify_otp(
@@ -146,19 +148,21 @@ def _dispatch_otp_message(
     identifier: str,
     raw_code: str,
     purpose: str,
-) -> None:
+) -> str:
     """Dispatches the OTP message according to communication channel."""
     if "@" in identifier or channel == "email":
         try:
-            email_circuit_breaker.call(
+            status = email_circuit_breaker.call(
                 email_service.send_otp_email,
                 recipient=identifier,
                 code=raw_code,
                 expires_minutes=OTP_EXPIRY_MINUTES,
                 purpose=purpose.replace("_", " "),
             )
+            return str(status or "email_sent")
         except Exception as exc:
             logger.warning("Email OTP dispatch failed for %s: %s", identifier, exc)
+            return "email_delivery_failed"
     elif channel in {"whatsapp", "sms", "voice"}:
         # In multi-channel deployments, triggers WhatsApp Business API template or Twilio SMS
         logger.info(
@@ -168,3 +172,5 @@ def _dispatch_otp_message(
             raw_code,
             OTP_EXPIRY_MINUTES,
         )
+        return "channel_logged"
+    return "otp_recorded"

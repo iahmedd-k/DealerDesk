@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from app.api.v1.endpoints.after_sales import router as after_sales_router
 from app.api.v1.endpoints.assistant import router as assistant_router
 from app.api.v1.endpoints.audit import router as audit_router
 from app.api.v1.endpoints.auth import router as auth_router
@@ -7,6 +8,7 @@ from app.api.v1.endpoints.brands import router as brands_router
 from app.api.v1.endpoints.channels import router as channels_router
 from app.api.v1.endpoints.conversations import router as conversations_router
 from app.api.v1.endpoints.dealerships import router as dealerships_router
+from app.api.v1.endpoints.email_mailboxes import router as email_mailboxes_router
 from app.api.v1.endpoints.governance import router as governance_router
 from app.api.v1.endpoints.health import router as health_router
 from app.api.v1.endpoints.leads import router as leads_router
@@ -22,6 +24,7 @@ from app.channels.whatsapp.router import router as whatsapp_channel_router
 
 
 router = APIRouter(prefix="/api/v1")
+router.include_router(after_sales_router)
 router.include_router(assistant_router)
 router.include_router(audit_router)
 router.include_router(auth_router)
@@ -29,6 +32,7 @@ router.include_router(brands_router)
 router.include_router(channels_router)
 router.include_router(conversations_router)
 router.include_router(dealerships_router)
+router.include_router(email_mailboxes_router)
 router.include_router(governance_router)
 router.include_router(health_router)
 router.include_router(leads_router)

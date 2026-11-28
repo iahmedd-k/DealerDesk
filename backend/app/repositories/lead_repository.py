@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -14,10 +16,17 @@ def list_leads(
     limit: int,
     offset: int,
     sales_rep_user_id: int | None,
+    overdue_only: bool = False,
 ) -> list[CustomerLead]:
     statement = select(CustomerLead).where(CustomerLead.dealership_id == dealership_id)
     if status is not None:
         statement = statement.where(CustomerLead.status == status)
+    if overdue_only:
+        statement = statement.where(
+            CustomerLead.next_follow_up_at.is_not(None),
+            CustomerLead.next_follow_up_at <= datetime.now(timezone.utc),
+            CustomerLead.status.notin_(["won", "lost"]),
+        )
     if sales_rep_user_id is not None:
         statement = statement.where(
             or_(
@@ -34,11 +43,33 @@ def list_leads(
     )
 
 
-def get_lead(db: Session, dealership_id: int, lead_id: int) -> CustomerLead | None:
-    return db.scalar(
-        select(CustomerLead).where(
-            CustomerLead.id == lead_id,
-            CustomerLead.dealership_id == dealership_id,
+def get_lead(
+    db: Session,
+    dealership_id: int,
+    lead_id: int,
+    *,
+    lock: bool = False,
+) -> CustomerLead | None:
+    query = select(CustomerLead).where(
+        CustomerLead.id == lead_id,
+        CustomerLead.dealership_id == dealership_id,
+    )
+    if lock:
+        query = query.with_for_update()
+    return db.scalar(query)
+
+
+def get_leads_by_ids(
+    db: Session,
+    dealership_id: int,
+    lead_ids: list[int],
+) -> list[CustomerLead]:
+    return list(
+        db.scalars(
+            select(CustomerLead).where(
+                CustomerLead.dealership_id == dealership_id,
+                CustomerLead.id.in_(lead_ids),
+            )
         )
     )
 
@@ -54,13 +85,20 @@ def get_staff_user(db: Session, dealership_id: int, user_id: int) -> User | None
     )
 
 
-def get_vehicle(db: Session, dealership_id: int, vehicle_id: int) -> Vehicle | None:
-    return db.scalar(
-        select(Vehicle).where(
-            Vehicle.id == vehicle_id,
-            Vehicle.dealership_id == dealership_id,
-        )
+def get_vehicle(
+    db: Session,
+    dealership_id: int,
+    vehicle_id: int,
+    *,
+    lock: bool = False,
+) -> Vehicle | None:
+    query = select(Vehicle).where(
+        Vehicle.id == vehicle_id,
+        Vehicle.dealership_id == dealership_id,
     )
+    if lock:
+        query = query.with_for_update()
+    return db.scalar(query)
 
 
 def get_booking(
@@ -93,12 +131,19 @@ def count_leads(
     *,
     status: str | None,
     sales_rep_user_id: int | None,
+    overdue_only: bool = False,
 ) -> int:
     statement = select(func.count(CustomerLead.id)).where(
         CustomerLead.dealership_id == dealership_id
     )
     if status is not None:
         statement = statement.where(CustomerLead.status == status)
+    if overdue_only:
+        statement = statement.where(
+            CustomerLead.next_follow_up_at.is_not(None),
+            CustomerLead.next_follow_up_at <= datetime.now(timezone.utc),
+            CustomerLead.status.notin_(["won", "lost"]),
+        )
     if sales_rep_user_id is not None:
         statement = statement.where(
             or_(

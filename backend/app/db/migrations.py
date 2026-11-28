@@ -135,6 +135,14 @@ def ensure_security_and_idempotency_tables(engine: Engine) -> None:
 def ensure_channel_and_hold_tables(engine: Engine) -> None:
     with engine.begin() as connection:
         connection.execute(
+            text("ALTER TABLE dealerships ADD COLUMN IF NOT EXISTS whatsapp_number VARCHAR(20)")
+        )
+        connection.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_dealerships_whatsapp_number ON dealerships (whatsapp_number) WHERE whatsapp_number IS NOT NULL"
+            )
+        )
+        connection.execute(
             text(
                 """
                 CREATE TABLE IF NOT EXISTS conversations (
@@ -163,6 +171,11 @@ def ensure_channel_and_hold_tables(engine: Engine) -> None:
         )
         connection.execute(
             text(
+                "ALTER TABLE conversations ALTER COLUMN channel_user_id TYPE VARCHAR(320)"
+            )
+        )
+        connection.execute(
+            text(
                 """
                 CREATE TABLE IF NOT EXISTS conversation_messages (
                     id SERIAL PRIMARY KEY,
@@ -179,6 +192,31 @@ def ensure_channel_and_hold_tables(engine: Engine) -> None:
         connection.execute(
             text(
                 "CREATE INDEX IF NOT EXISTS ix_conversation_messages_conv_id ON conversation_messages (conversation_id)"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS external_thread_id VARCHAR(256)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_conversations_email_thread ON conversations (dealership_id, channel, external_thread_id)"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS external_message_id VARCHAR(256)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_conversation_messages_external_id ON conversation_messages (conversation_id, external_message_id)"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE gmail_mailbox_connections ADD COLUMN IF NOT EXISTS history_id VARCHAR(128)"
             )
         )
         connection.execute(
@@ -206,6 +244,46 @@ def ensure_channel_and_hold_tables(engine: Engine) -> None:
         connection.execute(
             text(
                 "CREATE INDEX IF NOT EXISTS ix_slot_holds_expires_at ON test_drive_slot_holds (expires_at)"
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS twilio_webhook_receipts (
+                    id SERIAL PRIMARY KEY,
+                    message_sid VARCHAR(64) NOT NULL UNIQUE,
+                    dealership_id INTEGER NOT NULL REFERENCES dealerships(id) ON DELETE CASCADE,
+                    status VARCHAR(24) NOT NULL DEFAULT 'processing',
+                    response_text TEXT,
+                    attempts INTEGER NOT NULL DEFAULT 1,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_twilio_webhook_receipts_dealership_id ON twilio_webhook_receipts (dealership_id)"
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS twilio_delivery_statuses (
+                    id SERIAL PRIMARY KEY,
+                    message_sid VARCHAR(64) NOT NULL UNIQUE,
+                    dealership_id INTEGER NOT NULL REFERENCES dealerships(id) ON DELETE CASCADE,
+                    recipient VARCHAR(32) NOT NULL,
+                    status VARCHAR(24) NOT NULL,
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_twilio_delivery_statuses_dealership_id ON twilio_delivery_statuses (dealership_id)"
             )
         )
         connection.execute(
@@ -365,8 +443,66 @@ def ensure_vehicle_lifecycle_and_audit_columns(engine: Engine) -> None:
         )
 
 
+def ensure_vehicle_spec_columns(engine: Engine) -> None:
+    with engine.begin() as connection:
+        for column_name, column_type in (
+            ("vin", "VARCHAR(17)"),
+            ("mileage", "INTEGER"),
+            ("transmission", "VARCHAR(32)"),
+            ("fuel_type", "VARCHAR(32)"),
+            ("drivetrain", "VARCHAR(32)"),
+            ("exterior_color", "VARCHAR(64)"),
+            ("interior_color", "VARCHAR(64)"),
+            ("acquisition_cost", "NUMERIC(12, 2)"),
+            ("location", "VARCHAR(100)"),
+            ("reconditioning_status", "VARCHAR(24) NOT NULL DEFAULT 'not_required'"),
+            ("acquired_at", "TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()"),
+        ):
+            connection.execute(
+                text(
+                    f"ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS {column_name} {column_type}"
+                )
+            )
+        connection.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_dealership_vin ON vehicles (dealership_id, vin)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_vehicles_acquired_at ON vehicles (acquired_at)"
+            )
+        )
+
+
 def ensure_crm_lead_enhancements(engine: Engine) -> None:
     with engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE customer_leads ADD COLUMN IF NOT EXISTS lost_reason VARCHAR(32)")
+        )
+        for column in (
+            "email_consent",
+            "sms_consent",
+            "whatsapp_consent",
+        ):
+            connection.execute(
+                text(
+                    f"ALTER TABLE customer_leads ADD COLUMN IF NOT EXISTS {column} BOOLEAN NOT NULL DEFAULT FALSE"
+                )
+            )
+        for column in (
+            "email_consented_at",
+            "email_opted_out_at",
+            "sms_consented_at",
+            "sms_opted_out_at",
+            "whatsapp_consented_at",
+            "whatsapp_opted_out_at",
+        ):
+            connection.execute(
+                text(
+                    f"ALTER TABLE customer_leads ADD COLUMN IF NOT EXISTS {column} TIMESTAMP WITH TIME ZONE"
+                )
+            )
         connection.execute(
             text("ALTER TABLE customer_leads ADD COLUMN IF NOT EXISTS budget NUMERIC(12, 2)")
         )
@@ -386,6 +522,31 @@ def ensure_crm_lead_enhancements(engine: Engine) -> None:
         )
         connection.execute(
             text("ALTER TABLE customer_leads ADD COLUMN IF NOT EXISTS deal_notes TEXT")
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE customer_leads ADD COLUMN IF NOT EXISTS trade_in_vehicle VARCHAR(200)"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE customer_leads ADD COLUMN IF NOT EXISTS trade_in_value NUMERIC(12, 2)"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE customer_leads ADD COLUMN IF NOT EXISTS down_payment NUMERIC(12, 2)"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE customer_leads ADD COLUMN IF NOT EXISTS apr_percent NUMERIC(5, 2)"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE customer_leads ADD COLUMN IF NOT EXISTS loan_term_months INTEGER"
+            )
         )
         connection.execute(
             text(
@@ -438,7 +599,51 @@ def ensure_notification_ledger_table(engine: Engine) -> None:
         )
         connection.execute(
             text(
+                "ALTER TABLE notification_deliveries ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE notification_deliveries ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMP WITH TIME ZONE"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE notification_deliveries ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMP WITH TIME ZONE"
+            )
+        )
+        connection.execute(
+            text(
                 "CREATE INDEX IF NOT EXISTS ix_notification_deliveries_dealership ON notification_deliveries (dealership_id, created_at)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_notification_deliveries_next_retry_at ON notification_deliveries (next_retry_at)"
+            )
+        )
+
+
+def ensure_test_drive_booking_outcomes(engine: Engine) -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "ALTER TABLE test_drive_bookings ADD COLUMN IF NOT EXISTS assigned_to_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE test_drive_bookings ADD COLUMN IF NOT EXISTS outcome_at TIMESTAMP WITH TIME ZONE"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE test_drive_bookings ADD COLUMN IF NOT EXISTS outcome_notes TEXT"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_test_drive_bookings_assigned_to_user_id ON test_drive_bookings (assigned_to_user_id)"
             )
         )
 
@@ -480,5 +685,29 @@ def ensure_governance_and_outbox_tables(engine: Engine) -> None:
         connection.execute(
             text(
                 "CREATE INDEX IF NOT EXISTS ix_outbox_events_status_retry ON outbox_events (status, next_retry_at)"
+            )
+        )
+
+
+def ensure_gmail_sync_columns(engine: Engine) -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "ALTER TABLE gmail_mailbox_connections ADD COLUMN IF NOT EXISTS next_sync_at TIMESTAMP WITH TIME ZONE"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE gmail_mailbox_connections ADD COLUMN IF NOT EXISTS sync_attempts INTEGER NOT NULL DEFAULT 0"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE gmail_mailbox_connections ADD COLUMN IF NOT EXISTS last_sync_error VARCHAR(128)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_gmail_mailbox_connections_next_sync_at ON gmail_mailbox_connections (next_sync_at)"
             )
         )

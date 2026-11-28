@@ -3,6 +3,7 @@ export interface Dealership {
   name: string;
   email: string;
   phone: string | null;
+  whatsapp_number?: string | null;
   address: string | null;
   timezone: string;
   is_active: boolean;
@@ -60,7 +61,19 @@ export interface Vehicle {
   variant: string | null;
   description: string | null;
   price: number;
+  acquisition_cost?: number | null;
+  location?: string | null;
+  reconditioning_status?: "not_required" | "needed" | "in_progress" | "complete";
+  acquired_at?: string | null;
+  days_in_stock?: number;
   stock_number: string;
+  vin?: string | null;
+  mileage?: number | null;
+  transmission?: string | null;
+  fuel_type?: string | null;
+  drivetrain?: string | null;
+  exterior_color?: string | null;
+  interior_color?: string | null;
   status?: VehicleStatus;
   is_available: boolean;
   test_drive_enabled: boolean;
@@ -89,11 +102,71 @@ export interface TestDriveBooking {
   customer_name?: string;
   customer_email?: string;
   customer_phone?: string;
-  status: "booked" | "completed" | "cancelled";
+  status: "booked" | "completed" | "no_show" | "cancelled";
+  assigned_to_user_id?: number | null;
+  outcome_at?: string | null;
+  outcome_notes?: string | null;
   created_at: string;
   cancelled_at: string | null;
   starts_at?: string;
   ends_at?: string;
+}
+
+export interface ServiceAppointment {
+  id: number;
+  dealership_id: number;
+  vehicle_id: number | null;
+  customer_name: string;
+  customer_email: string | null;
+  customer_phone: string | null;
+  scheduled_at: string;
+  concern: string;
+  status: "scheduled" | "confirmed" | "completed" | "cancelled" | "no_show";
+  assigned_to_user_id: number | null;
+  notes: string | null;
+  completed_at: string | null;
+  created_by_user_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ServiceWorkOrder {
+  id: number;
+  dealership_id: number;
+  appointment_id: number | null;
+  vehicle_id: number | null;
+  customer_name: string;
+  customer_email: string | null;
+  customer_phone: string | null;
+  concern: string;
+  diagnosis: string | null;
+  status: "open" | "in_progress" | "completed" | "cancelled";
+  labor_cost: number;
+  parts_cost: number;
+  total_cost: number;
+  follow_up_at: string | null;
+  follow_up_status: "not_required" | "pending" | "completed";
+  follow_up_notes: string | null;
+  created_by_user_id: number | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VehicleWarranty {
+  id: number;
+  dealership_id: number;
+  vehicle_id: number;
+  provider: string;
+  policy_number: string | null;
+  coverage: string;
+  start_date: string;
+  end_date: string;
+  mileage_limit: number | null;
+  notes: string | null;
+  created_by_user_id: number | null;
+  created_at: string;
+  is_active: boolean;
 }
 
 export interface CustomerLead {
@@ -116,8 +189,26 @@ export interface CustomerLead {
     | "won"
     | "lost"
     | "follow_up";
+  lost_reason?:
+    | "price"
+    | "vehicle_unavailable"
+    | "bought_elsewhere"
+    | "financing"
+    | "timing"
+    | "no_response"
+    | "other"
+    | null;
   consent_to_contact: boolean;
   consented_at: string | null;
+  email_consent: boolean;
+  email_consented_at: string | null;
+  email_opted_out_at: string | null;
+  sms_consent: boolean;
+  sms_consented_at: string | null;
+  sms_opted_out_at: string | null;
+  whatsapp_consent: boolean;
+  whatsapp_consented_at: string | null;
+  whatsapp_opted_out_at: string | null;
   next_follow_up_at: string | null;
   budget?: number | null;
   purchase_timeline?: string | null;
@@ -125,6 +216,11 @@ export interface CustomerLead {
   preferences?: Record<string, unknown> | null;
   deal_value?: number | null;
   deal_notes?: string | null;
+  trade_in_vehicle?: string | null;
+  trade_in_value?: number | null;
+  down_payment?: number | null;
+  apr_percent?: number | null;
+  loan_term_months?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -141,6 +237,29 @@ export interface LeadActivity {
   created_at: string;
 }
 
+export interface LeadQuote {
+  id: number;
+  dealership_id: number;
+  lead_id: number;
+  version: number;
+  status: "draft" | "sent" | "accepted" | "declined" | "expired";
+  vehicle_id: number | null;
+  vehicle_label: string | null;
+  sale_price: number;
+  trade_in_vehicle: string | null;
+  trade_in_value: number;
+  down_payment: number;
+  amount_financed: number;
+  apr_percent: number;
+  loan_term_months: number;
+  estimated_monthly_payment: number;
+  disclaimer: string;
+  notes: string | null;
+  created_by_user_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ConversationMessageItem {
   id: number;
   conversation_id: number;
@@ -154,8 +273,9 @@ export interface ConversationMessageItem {
 export interface ConversationSummary {
   id: number;
   dealership_id: number;
-  channel: "website" | "whatsapp" | "voice" | string;
+  channel: "website" | "whatsapp" | "voice" | "email" | string;
   channel_user_id: string;
+  email_subject?: string | null;
   customer_id: number | null;
   status: "active" | "handed_off" | "closed" | string;
   assigned_to_user_id: number | null;
@@ -169,6 +289,14 @@ export interface ConversationSummary {
 
 export interface ConversationDetail extends ConversationSummary {
   messages: ConversationMessageItem[];
+}
+
+export interface GmailMailboxStatus {
+  connected: boolean;
+  email: string | null;
+  last_synced_at: string | null;
+  next_sync_at?: string | null;
+  last_sync_error?: string | null;
 }
 
 export interface KnowledgeDocument {
@@ -214,10 +342,59 @@ export interface TestDriveSettings {
 export interface OperationsSummary {
   dealership_id: number;
   inventory: { total: number; by_status: Record<string, number>; total_value: number };
-  leads: { total: number; by_status: Record<string, number>; won_deal_value: number };
+  leads: {
+    total: number;
+    by_status: Record<string, number>;
+    deal_value_by_status: Record<string, number>;
+    by_source: Record<string, number>;
+    won_deal_value: number;
+  };
   test_drives: { total: number; by_status: Record<string, number> };
   conversations: { total: number; by_channel: Record<string, number>; handoff_queue: number };
   observability: { outbox_by_status: Record<string, number>; notifications_by_status: Record<string, number> };
+}
+
+export interface DealershipAnalytics {
+  start_date: string;
+  end_date: string;
+  leads: {
+    total: number;
+    won: number;
+    conversion_rate: number;
+    by_status: Record<string, number>;
+  };
+  by_source: Array<{
+    source: string;
+    leads: number;
+    won: number;
+    conversion_rate: number;
+    won_deal_value: number;
+  }>;
+  by_rep: Array<{
+    user_id: number | null;
+    name: string;
+    leads: number;
+    won: number;
+    conversion_rate: number;
+    won_deal_value: number;
+  }>;
+  historical: {
+    daily: Array<{
+      date: string;
+      leads_created: number;
+      won: number;
+      lost: number;
+    }>;
+    stage_transitions: Record<string, number>;
+    lost_by_reason: Record<string, number>;
+    wins_by_rep_at_close: Array<{
+      user_id: number | null;
+      name: string;
+      won: number;
+      won_deal_value: number;
+    }>;
+  };
+  test_drives: { total: number };
 }
 
 export interface NotificationDelivery {
@@ -229,6 +406,15 @@ export interface NotificationDelivery {
   status: string;
   error_message: string | null;
   sent_at: string | null;
+  created_at: string;
+}
+
+export interface InAppNotification {
+  id: string;
+  title: string;
+  message: string;
+  href: string;
+  severity: "urgent" | "high" | "normal" | string;
   created_at: string;
 }
 

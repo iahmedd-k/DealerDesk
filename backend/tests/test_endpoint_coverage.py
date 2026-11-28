@@ -246,6 +246,7 @@ def test_every_api_route_has_a_workflow(client, db, seeded_users, monkeypatch) -
         client.post(
             f"/api/v1/dealerships/{new_dealership_id}/test-drive-slots/{inactive_slot_id}/bookings",
             headers=customer_headers,
+            json={"confirmed": True},
         ).status_code
         == 404
     )
@@ -488,11 +489,18 @@ def test_every_api_route_has_a_workflow(client, db, seeded_users, monkeypatch) -
         f"/api/v1/dealerships/{dealership_id}/test-drive-slots/{slot_id}/bookings",
         headers=customer_headers,
     )
+    assert booking.status_code == 422
+    booking = client.post(
+        f"/api/v1/dealerships/{dealership_id}/test-drive-slots/{slot_id}/bookings",
+        headers=customer_headers,
+        json={"confirmed": True},
+    )
     assert booking.status_code == 201
     assert (
         client.post(
             f"/api/v1/dealerships/{dealership_id}/test-drive-slots/{slot_id}/bookings",
             headers=customer_headers,
+            json={"confirmed": True},
         ).status_code
         == 409
     )
@@ -519,6 +527,7 @@ def test_every_api_route_has_a_workflow(client, db, seeded_users, monkeypatch) -
     replacement_booking = client.post(
         f"/api/v1/dealerships/{dealership_id}/test-drive-slots/{slot_id}/bookings",
         headers=customer_headers,
+        json={"confirmed": True},
     )
     assert replacement_booking.status_code == 201
     assert (

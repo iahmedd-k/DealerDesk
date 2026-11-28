@@ -279,7 +279,11 @@ def test_test_drive_booking_reschedule_cancel_trigger_emails(monkeypatch) -> Non
     monkeypatch.setattr(slot_hold_service, "get_active_holds_count_for_slot", lambda db, sid: 0)
 
     db = MagicMock()
-    test_drive_service.book_slot(db, 1, 100, customer)
+    from app.schemas.workspace import TestDriveBookingRequest
+
+    test_drive_service.book_slot(
+        db, 1, 100, customer, TestDriveBookingRequest(confirmed=True)
+    )
     test_drive_service.reschedule_booking(
         db,
         1,
@@ -334,7 +338,7 @@ def test_lead_notifications_and_assignment_emails(monkeypatch) -> None:
 
     monkeypatch.setattr(lead_service.dealership_repository, "get_by_id", lambda db, did: dealership)
     monkeypatch.setattr(lead_service.lead_repository, "get_vehicle", lambda db, did, vid: None)
-    monkeypatch.setattr(lead_service.lead_repository, "get_lead", lambda db, did, lid: lead)
+    monkeypatch.setattr(lead_service.lead_repository, "get_lead", lambda db, did, lid, **_kw: lead)
     monkeypatch.setattr(lead_service.lead_repository, "get_staff_user", lambda db, did, uid: staff_user)
     monkeypatch.setattr(lead_service.lead_repository, "save", lambda db, obj: obj)
 

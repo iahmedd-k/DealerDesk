@@ -1,9 +1,9 @@
 from decimal import Decimal
 
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, noload
 
-from app.models.workspace import Brand, Vehicle, VehicleStatusHistory
+from app.models.workspace import Brand, Dealership, Vehicle, VehicleStatusHistory
 
 
 def list_for_dealership(
@@ -17,13 +17,24 @@ def list_for_dealership(
     status: str | None = None,
     is_available: bool | None = None,
     test_drive_enabled: bool | None = None,
+    fuel_type: str | None = None,
+    transmission: str | None = None,
+    drivetrain: str | None = None,
     search: str | None = None,
     sort_by: str | None = None,
     order: str = "asc",
     page: int | None = None,
     page_size: int | None = None,
+    limit: int | None = None,
+    active_dealership_only: bool = False,
+    include_images: bool = True,
+    include_status_history: bool = True,
 ) -> list[Vehicle]:
     query = select(Vehicle).where(Vehicle.dealership_id == dealership_id)
+    if active_dealership_only:
+        query = query.join(
+            Dealership, Dealership.id == Vehicle.dealership_id
+        ).where(Dealership.is_active.is_(True))
     if not include_archived_brands:
         query = query.join(Brand, Brand.id == Vehicle.brand_id).where(
             Brand.is_active.is_(True),
@@ -41,6 +52,12 @@ def list_for_dealership(
         query = query.where(Vehicle.is_available == is_available)
     if test_drive_enabled is not None:
         query = query.where(Vehicle.test_drive_enabled == test_drive_enabled)
+    if fuel_type:
+        query = query.where(Vehicle.fuel_type.ilike(fuel_type))
+    if transmission:
+        query = query.where(Vehicle.transmission.ilike(transmission))
+    if drivetrain:
+        query = query.where(Vehicle.drivetrain.ilike(drivetrain))
     if search:
         search_pattern = f"%{search.strip()}%"
         query = query.where(
@@ -49,6 +66,7 @@ def list_for_dealership(
                 Vehicle.make.ilike(search_pattern),
                 Vehicle.variant.ilike(search_pattern),
                 Vehicle.stock_number.ilike(search_pattern),
+                Vehicle.vin.ilike(search_pattern),
             )
         )
 
@@ -70,6 +88,13 @@ def list_for_dealership(
     if page is not None and page_size is not None:
         offset = (page - 1) * page_size
         query = query.offset(offset).limit(page_size)
+    if limit is not None:
+        query = query.limit(limit)
+
+    if not include_images:
+        query = query.options(noload(Vehicle.images))
+    if not include_status_history:
+        query = query.options(noload(Vehicle.status_history))
 
     return list(db.scalars(query))
 
@@ -85,6 +110,9 @@ def count_for_dealership(
     status: str | None = None,
     is_available: bool | None = None,
     test_drive_enabled: bool | None = None,
+    fuel_type: str | None = None,
+    transmission: str | None = None,
+    drivetrain: str | None = None,
     search: str | None = None,
 ) -> int:
     query = select(func.count(Vehicle.id)).where(Vehicle.dealership_id == dealership_id)
@@ -105,6 +133,12 @@ def count_for_dealership(
         query = query.where(Vehicle.is_available == is_available)
     if test_drive_enabled is not None:
         query = query.where(Vehicle.test_drive_enabled == test_drive_enabled)
+    if fuel_type:
+        query = query.where(Vehicle.fuel_type.ilike(fuel_type))
+    if transmission:
+        query = query.where(Vehicle.transmission.ilike(transmission))
+    if drivetrain:
+        query = query.where(Vehicle.drivetrain.ilike(drivetrain))
     if search:
         search_pattern = f"%{search.strip()}%"
         query = query.where(
@@ -113,6 +147,7 @@ def count_for_dealership(
                 Vehicle.make.ilike(search_pattern),
                 Vehicle.variant.ilike(search_pattern),
                 Vehicle.stock_number.ilike(search_pattern),
+                Vehicle.vin.ilike(search_pattern),
             )
         )
     return db.scalar(query) or 0

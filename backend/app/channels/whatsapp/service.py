@@ -64,6 +64,7 @@ class TwilioWhatsAppService:
         body: str,
         from_override: str | None = None,
         media_urls: list[str] | None = None,
+        status_callback: str | None = None,
     ) -> dict[str, Any]:
         """
         Sends an outbound WhatsApp message using the Twilio REST API.
@@ -75,7 +76,9 @@ class TwilioWhatsAppService:
         recipient = to if to.startswith("whatsapp:") else f"whatsapp:{to}"
 
         try:
-            logger.info("Sending Twilio WhatsApp message from %s to %s", sender, recipient)
+            if status_callback is None:
+                status_callback = get_settings().twilio_status_callback_url
+            logger.info("Sending Twilio WhatsApp message")
             kwargs: dict[str, Any] = {
                 "from_": sender,
                 "to": recipient,
@@ -83,18 +86,23 @@ class TwilioWhatsAppService:
             }
             if media_urls:
                 kwargs["media_url"] = media_urls
+            if status_callback:
+                kwargs["status_callback"] = status_callback
 
             msg = self.client.messages.create(**kwargs)
-            logger.info("Twilio message dispatched successfully. SID: %s", msg.sid)
+            logger.info("Twilio WhatsApp message accepted. SID: %s", msg.sid)
             return {
                 "sid": msg.sid,
                 "status": msg.status,
                 "to": recipient,
                 "from": sender,
-                "body": body,
             }
         except TwilioRestException as exc:
-            logger.error("Twilio API error sending message to %s: %s", recipient, exc)
+            logger.error(
+                "Twilio API rejected WhatsApp message (code=%s, status=%s)",
+                exc.code,
+                exc.status,
+            )
             raise
 
 

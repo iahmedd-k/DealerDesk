@@ -22,6 +22,7 @@ from app.core.roles import (
 from app.models.user import User
 from app.models.workspace import (
     CustomerLead,
+    LeadActivity,
     TestDriveBooking,
     TestDriveSettings,
     TestDriveSlot,
@@ -31,6 +32,7 @@ from app.repositories import test_drive_repository, user_repository
 from app.schemas.workspace import (
     TestDriveBookingRequest,
     TestDriveCancellationRequest,
+    TestDriveBookingOutcomeRequest,
     TestDriveRescheduleRequest,
     TestDriveSettingsRequest,
     TestDriveSlotCreateRequest,
@@ -211,6 +213,10 @@ def create_slot(
         )
     if payload.starts_at <= datetime.now(timezone.utc):
         raise UnprocessableEntityError("Slot start time must be in the future")
+    if payload.ends_at <= payload.starts_at:
+        raise UnprocessableEntityError("Slot end time must be after start time")
+    if payload.ends_at - payload.starts_at > timedelta(hours=8):
+        raise UnprocessableEntityError("A test-drive slot cannot be longer than 8 hours")
     existing = test_drive_repository.get_slot_for_vehicle_start(
         db,
         dealership_id,
@@ -219,6 +225,17 @@ def create_slot(
     )
     if existing is not None:
         raise ConflictError("A slot already exists for this vehicle at that start time")
+    overlapping = test_drive_repository.get_overlapping_slot(
+        db,
+        dealership_id,
+        payload.vehicle_id,
+        payload.starts_at,
+        payload.ends_at,
+    )
+    if overlapping is not None:
+        raise ConflictError(
+            f"This vehicle already has an overlapping slot (slot #{overlapping.id})"
+        )
     slot = TestDriveSlot(
         dealership_id=dealership_id,
         vehicle_id=payload.vehicle_id,
@@ -336,6 +353,77 @@ def list_bookings(
     )
 
 
+def update_booking_outcome(
+    db: Session,
+    dealership_id: int,
+    booking_id: int,
+    current_user: User,
+    payload: TestDriveBookingOutcomeRequest,
+) -> TestDriveBooking:
+    ensure_dealership_role_access(current_user, dealership_id, *STAFF_ROLES)
+    if not payload.model_fields_set:
+        raise UnprocessableEntityError("At least one booking field is required")
+    booking = test_drive_repository.get_booking(
+        db, dealership_id, booking_id, lock=True
+    )
+    if booking is None:
+        raise NotFoundError("Booking not found")
+
+    changes = payload.model_dump(exclude_unset=True)
+    if "assigned_to_user_id" in changes and booking.status != "booked":
+        raise ConflictError("Only booked test drives can be assigned a host")
+    if "assigned_to_user_id" in changes and changes["assigned_to_user_id"] is not None:
+        host = db.scalar(
+            select(User).where(
+                User.id == changes["assigned_to_user_id"],
+                User.dealership_id == dealership_id,
+                User.role.in_(STAFF_ROLES),
+                User.is_active.is_(True),
+            )
+        )
+        if host is None:
+            raise NotFoundError("Active dealership staff member not found")
+        booking.assigned_to_user_id = host.id
+    elif "assigned_to_user_id" in changes:
+        booking.assigned_to_user_id = None
+
+    outcome = changes.get("status")
+    if outcome is not None:
+        if booking.status != "booked":
+            raise ConflictError("Only booked test drives can receive an outcome")
+        booking.status = outcome
+        booking.outcome_at = datetime.now(timezone.utc)
+        _sync_lead_after_booking_change(
+            db,
+            booking,
+            status="qualified" if outcome == "completed" else "follow_up",
+            follow_up_at=(
+                None
+                if outcome == "completed"
+                else datetime.now(timezone.utc) + timedelta(hours=1)
+            ),
+            summary=(
+                "Test drive completed"
+                if outcome == "completed"
+                else "Customer missed test drive; follow-up required"
+            ),
+        )
+    if "outcome_notes" in changes:
+        booking.outcome_notes = changes["outcome_notes"]
+
+    test_drive_repository.save(db, booking)
+    audit_service.log_event(
+        db,
+        action="booking.updated",
+        resource_type="test_drive_booking",
+        resource_id=str(booking.id),
+        dealership_id=dealership_id,
+        actor=current_user,
+        details=changes,
+    )
+    return booking
+
+
 def list_customer_bookings(
     db: Session,
     dealership_id: int,
@@ -349,10 +437,10 @@ def book_slot(
     dealership_id: int,
     slot_id: int,
     current_user: User,
-    payload: TestDriveBookingRequest | None = None,
+    payload: TestDriveBookingRequest,
 ) -> TestDriveBooking:
     ensure_role(current_user, CUSTOMER_ROLE)
-    if payload is not None and not payload.confirmed:
+    if not payload.confirmed:
         raise BadRequestError(
             "Explicit confirmation is required to book a test drive"
         )
@@ -365,7 +453,7 @@ def book_slot(
     if slot.booked_count >= slot.capacity:
         raise ConflictError("Test-drive slot is full")
     from app.services import slot_hold_service
-    if payload is not None and payload.hold_token:
+    if payload.hold_token:
         slot_hold_service.confirm_slot_hold(db, payload.hold_token)
     else:
         active_holds = slot_hold_service.get_active_holds_count_for_slot(db, slot.id)
@@ -531,6 +619,14 @@ def reschedule_booking(
     new_slot.booked_count += 1
     booking.slot_id = new_slot.id
     booking.vehicle_id = new_slot.vehicle_id
+    _sync_lead_after_booking_change(
+        db,
+        booking,
+        status="test_drive_scheduled",
+        follow_up_at=None,
+        summary="Test drive rescheduled",
+        vehicle_id=new_slot.vehicle_id,
+    )
 
     if old_slot is not None:
         test_drive_repository.save(db, booking, old_slot, new_slot)
@@ -587,11 +683,21 @@ def cancel_booking(
     else:
         ensure_dealership_role_access(current_user, dealership_id, *STAFF_ROLES)
     if booking.status == "booked":
+        now = datetime.now(timezone.utc)
         booking.status = "cancelled"
-        booking.cancelled_at = datetime.now(timezone.utc)
+        booking.cancelled_at = now
+        if payload and payload.reason:
+            booking.outcome_notes = payload.reason.strip()
         slot = test_drive_repository.get_slot_by_id(db, booking.slot_id, lock=True)
         if slot is not None and slot.booked_count > 0:
             slot.booked_count -= 1
+        _sync_lead_after_booking_change(
+            db,
+            booking,
+            status="follow_up",
+            follow_up_at=now + timedelta(hours=1),
+            summary="Test drive cancelled; customer follow-up required",
+        )
         if slot is None:
             test_drive_repository.save(db, booking)
         else:
@@ -614,6 +720,50 @@ def cancel_booking(
                 )
         except Exception as exc:
             logger.warning("Test-drive cancellation email failed for booking %s: %s", booking.id, exc)
+
+
+def _sync_lead_after_booking_change(
+    db: Session,
+    booking: TestDriveBooking,
+    *,
+    status: str,
+    follow_up_at: datetime | None,
+    summary: str,
+    vehicle_id: int | None = None,
+) -> None:
+    lead = db.scalar(
+        select(CustomerLead).where(
+            CustomerLead.dealership_id == booking.dealership_id,
+            CustomerLead.test_drive_booking_id == booking.id,
+        )
+    )
+    if lead is None or lead.status in {"won", "lost"}:
+        return
+
+    now = datetime.now(timezone.utc)
+    previous_status = lead.status
+    if lead.status == "test_drive_scheduled":
+        lead.status = status
+    if vehicle_id is not None:
+        lead.requested_vehicle_id = vehicle_id
+    lead.next_follow_up_at = follow_up_at
+    lead.updated_at = now
+    db.add(
+        LeadActivity(
+            dealership_id=booking.dealership_id,
+            lead_id=lead.id,
+            actor_user_id=None,
+            activity_type="booking_updated",
+            summary=summary,
+            details={
+            "booking_id": booking.id,
+            "previous_lead_status": previous_status,
+            "lead_status": lead.status,
+            "vehicle_id": vehicle_id or booking.vehicle_id,
+            },
+            created_at=now,
+        )
+    )
 def _get_slot(
     db: Session,
     dealership_id: int,

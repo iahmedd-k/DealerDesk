@@ -21,21 +21,21 @@ def generate_completion(
     context_data: dict[str, Any] | None = None,
 ) -> str:
     settings = get_settings()
-    if settings.llm_api_url:
-        if not settings.llm_api_key:
-            raise ServiceUnavailableError("The configured language model API key is missing")
+    llm_cfg = settings.get_llm_config()
+    if llm_cfg is not None:
+        llm_url, llm_key, llm_model, _ = llm_cfg
         try:
-            with httpx.Client(timeout=15.0) as client:
+            with httpx.Client(timeout=20.0) as client:
                 response = client.post(
-                    settings.llm_api_url,
+                    llm_url,
                     json={
-                        "model": settings.llm_model,
+                        "model": llm_model,
                         "messages": messages,
                         "temperature": temperature,
                         "max_tokens": max_tokens,
                     },
                     headers={
-                        "Authorization": f"Bearer {settings.llm_api_key.get_secret_value()}",
+                        "Authorization": f"Bearer {llm_key}",
                         "Content-Type": "application/json",
                     },
                 )
@@ -71,24 +71,24 @@ async def stream_completion(
     Asynchronously streams tokens or phrases from external LLM or local synthesis engine.
     """
     settings = get_settings()
-    if settings.llm_api_url:
-        if not settings.llm_api_key:
-            raise ServiceUnavailableError("The configured language model API key is missing")
+    llm_cfg = settings.get_llm_config()
+    if llm_cfg is not None:
+        llm_url, llm_key, llm_model, _ = llm_cfg
         content_parts: list[str] = []
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 async with client.stream(
                     "POST",
-                    settings.llm_api_url,
+                    llm_url,
                     json={
-                        "model": settings.llm_model,
+                        "model": llm_model,
                         "messages": messages,
                         "temperature": temperature,
                         "max_tokens": max_tokens,
                         "stream": True,
                     },
                     headers={
-                        "Authorization": f"Bearer {settings.llm_api_key.get_secret_value()}",
+                        "Authorization": f"Bearer {llm_key}",
                         "Content-Type": "application/json",
                     },
                 ) as response:
@@ -158,7 +158,7 @@ def _synthesize_grounded_response(
     if intent == "test_drive_booking":
         if slots:
             slot_times = [
-                f"* **Slot #{slot['id']}**: {slot['starts_at'][:16].replace('T', ' ')} UTC "
+                f"* **Slot #{slot.get('id') or slot.get('slot_id')}**: {slot['starts_at'][:16].replace('T', ' ')} UTC "
                 f"({slot['remaining_capacity']} spot{'s' if slot['remaining_capacity'] != 1 else ''} open)"
                 for slot in slots[:3]
             ]

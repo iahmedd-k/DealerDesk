@@ -1,6 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
+import re
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -203,7 +204,22 @@ class VehicleCreateRequest(BaseModel):
     variant: str | None = Field(default=None, max_length=120)
     description: str | None = None
     price: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
+    acquisition_cost: Decimal | None = Field(
+        default=None, ge=0, max_digits=12, decimal_places=2
+    )
+    location: str | None = Field(default=None, max_length=100)
+    reconditioning_status: Literal[
+        "not_required", "needed", "in_progress", "complete"
+    ] = "not_required"
+    acquired_at: datetime | None = None
     stock_number: str = Field(min_length=1, max_length=64)
+    vin: str | None = Field(default=None, max_length=17)
+    mileage: int | None = Field(default=None, ge=0, le=2_000_000)
+    transmission: str | None = Field(default=None, max_length=32)
+    fuel_type: str | None = Field(default=None, max_length=32)
+    drivetrain: str | None = Field(default=None, max_length=32)
+    exterior_color: str | None = Field(default=None, max_length=64)
+    interior_color: str | None = Field(default=None, max_length=64)
     status: str = Field(default="available", description="Vehicle lifecycle status: available, reserved, sold, in_transit, unavailable")
     test_drive_enabled: bool = False
 
@@ -214,6 +230,16 @@ class VehicleCreateRequest(BaseModel):
         cleaned = value.strip().lower()
         if cleaned not in allowed:
             raise ValueError(f"status must be one of {sorted(allowed)}")
+        return cleaned
+
+    @field_validator("vin")
+    @classmethod
+    def normalize_vin(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        cleaned = value.strip().upper()
+        if not re.fullmatch(r"[A-HJ-NPR-Z0-9]{17}", cleaned):
+            raise ValueError("VIN must contain 17 valid letters or digits")
         return cleaned
 
     model_config = ConfigDict(
@@ -253,8 +279,21 @@ class VehicleResponse(VehicleCreateRequest):
     is_available: bool
     price: float
     images: list[VehicleImageResponse] = Field(default_factory=list)
+    acquisition_cost: Decimal | None = Field(default=None, exclude=True)
+    location: str | None = Field(default=None, exclude=True)
+    reconditioning_status: str = Field(default="not_required", exclude=True)
+    acquired_at: datetime | None = Field(default=None, exclude=True)
+    days_in_stock: int | None = Field(default=None, exclude=True)
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class VehicleStaffResponse(VehicleResponse):
+    acquisition_cost: Decimal | None = None
+    location: str | None = None
+    reconditioning_status: str = "not_required"
+    acquired_at: datetime | None = None
+    days_in_stock: int | None = None
 
 
 class VehicleImageUpdateRequest(BaseModel):
@@ -274,7 +313,22 @@ class VehicleUpdateRequest(BaseModel):
         max_digits=12,
         decimal_places=2,
     )
+    acquisition_cost: Decimal | None = Field(
+        default=None, ge=0, max_digits=12, decimal_places=2
+    )
+    location: str | None = Field(default=None, max_length=100)
+    reconditioning_status: Literal[
+        "not_required", "needed", "in_progress", "complete"
+    ] | None = None
+    acquired_at: datetime | None = None
     stock_number: str | None = Field(default=None, min_length=1, max_length=64)
+    vin: str | None = Field(default=None, max_length=17)
+    mileage: int | None = Field(default=None, ge=0, le=2_000_000)
+    transmission: str | None = Field(default=None, max_length=32)
+    fuel_type: str | None = Field(default=None, max_length=32)
+    drivetrain: str | None = Field(default=None, max_length=32)
+    exterior_color: str | None = Field(default=None, max_length=64)
+    interior_color: str | None = Field(default=None, max_length=64)
     status: str | None = Field(default=None, description="Vehicle lifecycle status")
     is_available: bool | None = None
     test_drive_enabled: bool | None = None
@@ -290,13 +344,39 @@ class VehicleUpdateRequest(BaseModel):
             raise ValueError(f"status must be one of {sorted(allowed)}")
         return cleaned
 
+    @field_validator("vin")
+    @classmethod
+    def validate_update_vin(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        cleaned = value.strip().upper()
+        if not re.fullmatch(r"[A-HJ-NPR-Z0-9]{17}", cleaned):
+            raise ValueError("VIN must contain 17 valid letters or digits")
+        return cleaned
+
+
+class CSVVehicleImportRequest(BaseModel):
+    csv_content: str = Field(min_length=1, max_length=2_000_000)
+    mode: Literal["create", "upsert"] = "create"
+
 
 class DealershipUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=150)
     email: EmailStr | None = None
     phone: str | None = Field(default=None, max_length=32)
+    whatsapp_number: str | None = Field(default=None, max_length=20)
     address: str | None = Field(default=None, max_length=255)
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
+
+    @field_validator("whatsapp_number")
+    @classmethod
+    def validate_whatsapp_number(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        cleaned = value.strip().removeprefix("whatsapp:")
+        if not re.fullmatch(r"\+[1-9]\d{7,14}", cleaned):
+            raise ValueError("whatsapp_number must be an E.164 number, such as +14155550123")
+        return cleaned
 
     @field_validator("timezone")
     @classmethod
@@ -394,7 +474,7 @@ class TestDriveSlotUpdateRequest(BaseModel):
 
 class TestDriveBookingRequest(BaseModel):
     confirmed: bool = Field(
-        default=True,
+        ...,
         description="Explicit customer confirmation to book the slot",
     )
     hold_token: str | None = Field(
@@ -465,10 +545,27 @@ class TestDriveBookingResponse(BaseModel):
     starts_at: datetime | None = None
     ends_at: datetime | None = None
     status: str
+    assigned_to_user_id: int | None = None
+    outcome_at: datetime | None = None
+    outcome_notes: str | None = None
     created_at: datetime
     cancelled_at: datetime | None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class TestDriveBookingOutcomeRequest(BaseModel):
+    status: Literal["completed", "no_show"] | None = None
+    assigned_to_user_id: int | None = Field(default=None, ge=1)
+    outcome_notes: str | None = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def validate_changes(self) -> "TestDriveBookingOutcomeRequest":
+        if not ({"status", "assigned_to_user_id", "outcome_notes"} & self.model_fields_set):
+            raise ValueError("Provide a booking outcome, host, or outcome note")
+        if "status" in self.model_fields_set and self.status is None:
+            raise ValueError("Booking outcome cannot be null")
+        return self
 
 
 class CustomerLeadCreateRequest(BaseModel):
@@ -479,6 +576,9 @@ class CustomerLeadCreateRequest(BaseModel):
     source: Literal["website", "assistant", "phone", "walk_in", "referral", "whatsapp", "voice"] = "website"
     requested_vehicle_id: int | None = Field(default=None, ge=1)
     consent_to_contact: Literal[True]
+    email_consent: bool = False
+    sms_consent: bool = False
+    whatsapp_consent: bool = False
     budget: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     purchase_timeline: str | None = Field(default=None, max_length=64)
     conversation_id: int | None = Field(default=None, ge=1)
@@ -517,6 +617,18 @@ class CustomerLeadUpdateRequest(BaseModel):
         "lost",
         "follow_up",
     ] | None = None
+    lost_reason: Literal[
+        "price",
+        "vehicle_unavailable",
+        "bought_elsewhere",
+        "financing",
+        "timing",
+        "no_response",
+        "other",
+    ] | None = None
+    email_consent: bool = False
+    sms_consent: bool = False
+    whatsapp_consent: bool = False
     assigned_to_user_id: int | None = Field(default=None, ge=1)
     next_follow_up_at: datetime | None = None
     budget: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
@@ -524,6 +636,11 @@ class CustomerLeadUpdateRequest(BaseModel):
     preferences: dict | None = None
     deal_value: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     deal_notes: str | None = Field(default=None, max_length=2000)
+    trade_in_vehicle: str | None = Field(default=None, max_length=200)
+    trade_in_value: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    down_payment: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    apr_percent: Decimal | None = Field(default=None, ge=0, le=50, max_digits=5, decimal_places=2)
+    loan_term_months: int | None = Field(default=None, ge=1, le=120)
 
     @field_validator("next_follow_up_at")
     @classmethod
@@ -531,6 +648,31 @@ class CustomerLeadUpdateRequest(BaseModel):
         if value is not None and value.utcoffset() is None:
             raise ValueError("next_follow_up_at must include a timezone")
         return value
+
+
+class BulkCustomerLeadUpdateRequest(BaseModel):
+    lead_ids: list[int] = Field(min_length=1, max_length=200)
+    status: Literal["new", "contacted", "qualified", "follow_up"] | None = None
+    assigned_to_user_id: int | None = Field(default=None, ge=1)
+
+    @field_validator("lead_ids")
+    @classmethod
+    def validate_unique_lead_ids(cls, value: list[int]) -> list[int]:
+        if any(lead_id < 1 for lead_id in value):
+            raise ValueError("lead_ids must contain positive IDs")
+        if len(set(value)) != len(value):
+            raise ValueError("lead_ids cannot contain duplicates")
+        return value
+
+    @model_validator(mode="after")
+    def validate_update_fields(self) -> "BulkCustomerLeadUpdateRequest":
+        if not ({"status", "assigned_to_user_id"} & self.model_fields_set):
+            raise ValueError("Provide a status and/or assigned_to_user_id")
+        return self
+
+
+class CSVLeadImportRequest(BaseModel):
+    csv_content: str = Field(min_length=1, max_length=2_000_000)
 
 
 class CustomerLeadConvertRequest(BaseModel):
@@ -560,6 +702,16 @@ class CustomerLeadResponse(BaseModel):
     ]
     consent_to_contact: bool
     consented_at: datetime | None
+    email_consent: bool
+    email_consented_at: datetime | None
+    email_opted_out_at: datetime | None
+    sms_consent: bool
+    sms_consented_at: datetime | None
+    sms_opted_out_at: datetime | None
+    whatsapp_consent: bool
+    whatsapp_consented_at: datetime | None
+    whatsapp_opted_out_at: datetime | None
+    lost_reason: str | None = None
     next_follow_up_at: datetime | None
     budget: float | None = None
     purchase_timeline: str | None = None
@@ -567,6 +719,11 @@ class CustomerLeadResponse(BaseModel):
     preferences: dict | None = None
     deal_value: float | None = None
     deal_notes: str | None = None
+    trade_in_vehicle: str | None = None
+    trade_in_value: float | None = None
+    down_payment: float | None = None
+    apr_percent: float | None = None
+    loan_term_months: int | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -574,7 +731,7 @@ class CustomerLeadResponse(BaseModel):
 
 
 class LeadActivityCreateRequest(BaseModel):
-    activity_type: Literal["note", "call", "email", "meeting"] = "note"
+    activity_type: Literal["note", "call", "email", "meeting", "quote"] = "note"
     summary: str = Field(min_length=1, max_length=2000)
     details: dict | None = None
 

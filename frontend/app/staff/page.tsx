@@ -174,7 +174,7 @@ export default function StaffPage() {
     <Shell>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-medium tracking-tight text-[#171717]">
+          <h1 className="crm-page-title">
             Team & Staff Workspace
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -215,14 +215,14 @@ export default function StaffPage() {
       ) : (
         <div className="space-y-6">
           <div className="crm-table-wrap">
-            <table className="crm-table">
+            <table className="crm-table crm-table-compact table-fixed min-w-[680px]">
               <thead>
                 <tr>
-                  <th>Member</th>
-                  <th>Role</th>
-                  <th>Routing Availability</th>
-                  <th>Account</th>
-                  {isAdmin && <th className="text-right">Actions</th>}
+                  <th className="w-[26%]">Member</th>
+                  <th className="w-[16%]">Role</th>
+                  <th className="w-[20%]">Routing Availability</th>
+                  <th className="w-[13%]">Account</th>
+                  {isAdmin && <th className="w-[25%] text-right">Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -232,7 +232,7 @@ export default function StaffPage() {
                     <tr key={member.id}>
                       <td>
                         <div className="font-semibold text-slate-900">{member.name}</div>
-                        <div className="text-xs text-slate-500">{member.email}</div>
+                        <div className="break-all text-xs text-slate-500">{member.email}</div>
                       </td>
                       <td>
                         {isAdmin && member.id !== user?.id ? (
@@ -243,7 +243,7 @@ export default function StaffPage() {
                                 role: e.target.value as StaffUser["role"],
                               })
                             }
-                            className="crm-select py-1 text-xs w-44"
+                            className="crm-select min-w-0 w-full py-1 text-xs"
                           >
                             <option value="sales_rep">Sales Rep</option>
                             <option value="manager">Manager</option>
@@ -278,7 +278,7 @@ export default function StaffPage() {
                       {isAdmin && (
                         <td className="text-right">
                           {member.id !== user?.id && (
-                            <div className="inline-flex items-center gap-1.5">
+                            <div className="flex flex-wrap justify-end gap-1.5">
                               <button
                                 type="button"
                                 onClick={() =>
@@ -312,7 +312,7 @@ export default function StaffPage() {
           {isAdmin && (
             <div className="crm-card overflow-hidden">
               <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-2">
-                <Mail className="h-4 w-4 text-blue-600" />
+                <Mail className="h-4 w-4 text-slate-500" />
                 <h2 className="text-sm font-medium text-[#171717]">
                   Pending Invitations ({invitations.length})
                 </h2>

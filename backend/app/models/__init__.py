@@ -6,8 +6,13 @@ from app.models.channel import (
     ConversationMessage,
     OTPVerification,
     TestDriveSlotHold,
+    TwilioDeliveryStatus,
+    TwilioWebhookReceipt,
 )
 from app.models.idempotency import IdempotencyKey
+from app.models.quote import LeadQuote
+from app.models.gmail import GmailMailboxConnection
+from app.models.service import ServiceAppointment, ServiceWorkOrder, VehicleWarranty
 from app.models.user import (
     EmailVerificationToken,
     PasswordResetToken,
@@ -42,9 +47,11 @@ __all__ = [
     "CustomerLead",
     "Dealership",
     "EmailVerificationToken",
+    "GmailMailboxConnection",
     "IdempotencyKey",
     "KnowledgeChunk",
     "KnowledgeDocument",
+    "LeadQuote",
     "LeadActivity",
     "NotificationDelivery",
     "OTPVerification",
@@ -52,14 +59,19 @@ __all__ = [
     "PasswordResetToken",
     "RefreshToken",
     "RevokedAccessToken",
+    "ServiceAppointment",
+    "ServiceWorkOrder",
     "StaffInvitation",
     "TestDriveBooking",
     "TestDriveSettings",
     "TestDriveSlot",
     "TestDriveSlotHold",
+    "TwilioDeliveryStatus",
+    "TwilioWebhookReceipt",
     "User",
     "UserTokenVersion",
     "Vehicle",
     "VehicleImage",
     "VehicleStatusHistory",
+    "VehicleWarranty",
 ]
